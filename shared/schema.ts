@@ -600,6 +600,191 @@ export type InsertFuelPrice = z.infer<typeof insertFuelPriceSchema>;
 export type FuelPrice = typeof fuelPrices.$inferSelect;
 
 // ==========================================
+// 11. Merchant API (BNPL Integration - مثل تمارا/تابي)
+// ==========================================
+
+// التجار المسجلين في النظام
+export const merchants = pgTable("merchants", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  merchantCode: text("merchant_code").unique().notNull(), // MERCH-XXXXX
+  companyName: text("company_name").notNull(),
+  companyNameAr: text("company_name_ar"),
+  commercialReg: text("commercial_reg").unique(),
+  taxNumber: text("tax_number"),
+  website: text("website"),
+  callbackUrl: text("callback_url"), // URL للإشعارات
+  logoUrl: text("logo_url"),
+  contactEmail: text("contact_email").notNull(),
+  contactPhone: text("contact_phone"),
+  category: text("category"), // retail, ecommerce, fuel_station, etc.
+  commissionRate: real("commission_rate").default(3), // نسبة العمولة %
+  settlementDays: integer("settlement_days").default(1), // أيام التسوية
+  status: text("status").default("pending"), // pending, active, suspended
+  isVerified: boolean("is_verified").default(false),
+  maxTransactionLimit: real("max_transaction_limit").default(5000),
+  monthlyLimit: real("monthly_limit").default(100000),
+  currentMonthVolume: real("current_month_volume").default(0),
+  totalTransactions: integer("total_transactions").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertMerchantSchema = createInsertSchema(merchants).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertMerchant = z.infer<typeof insertMerchantSchema>;
+export type Merchant = typeof merchants.$inferSelect;
+
+// مفاتيح API للتجار
+export const merchantApiKeys = pgTable("merchant_api_keys", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  merchantId: varchar("merchant_id").notNull(),
+  keyType: text("key_type").notNull(), // sandbox, production
+  publicKey: text("public_key").unique().notNull(), // pk_test_xxx / pk_live_xxx
+  secretKey: text("secret_key").unique().notNull(), // sk_test_xxx / sk_live_xxx (مشفر)
+  webhookSecret: text("webhook_secret"), // whsec_xxx للتحقق من Webhooks
+  permissions: text("permissions").array().default(sql`ARRAY['checkout', 'refund', 'read']::text[]`),
+  ipWhitelist: text("ip_whitelist").array(),
+  isActive: boolean("is_active").default(true),
+  lastUsedAt: timestamp("last_used_at"),
+  expiresAt: timestamp("expires_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertMerchantApiKeySchema = createInsertSchema(merchantApiKeys).omit({ id: true, createdAt: true });
+export type InsertMerchantApiKey = z.infer<typeof insertMerchantApiKeySchema>;
+export type MerchantApiKey = typeof merchantApiKeys.$inferSelect;
+
+// جلسات الدفع (Checkout Sessions) - مثل تمارا/تابي
+export const checkoutSessions = pgTable("checkout_sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sessionToken: text("session_token").unique().notNull(), // chk_xxx
+  merchantId: varchar("merchant_id").notNull(),
+  merchantReference: text("merchant_reference").notNull(), // رقم الطلب من التاجر
+  
+  // بيانات المستهلك
+  consumerId: varchar("consumer_id"), // إذا كان مسجل
+  consumerPhone: text("consumer_phone").notNull(),
+  consumerEmail: text("consumer_email"),
+  consumerName: text("consumer_name"),
+  consumerNationalId: text("consumer_national_id"),
+  
+  // بيانات الطلب
+  currency: text("currency").default("SAR"),
+  totalAmount: real("total_amount").notNull(),
+  taxAmount: real("tax_amount").default(0),
+  shippingAmount: real("shipping_amount").default(0),
+  discountAmount: real("discount_amount").default(0),
+  items: jsonb("items"), // [{name, quantity, unitPrice, sku}]
+  
+  // خطة الدفع
+  paymentType: text("payment_type").default("pay_in_installments"), // pay_now, pay_later, pay_in_installments
+  installmentCount: integer("installment_count").default(4),
+  downPaymentPercent: real("down_payment_percent").default(0), // نسبة الدفعة المقدمة
+  
+  // URLs
+  successUrl: text("success_url").notNull(),
+  failureUrl: text("failure_url").notNull(),
+  cancelUrl: text("cancel_url"),
+  notificationUrl: text("notification_url"), // Webhook URL
+  
+  // الحالة
+  status: text("status").default("pending"), // pending, approved, captured, declined, expired, refunded
+  declineReason: text("decline_reason"),
+  
+  // الموافقة الائتمانية
+  creditDecision: text("credit_decision"), // approved, declined, pending_verification
+  creditLimit: real("credit_limit"),
+  riskScore: integer("risk_score"),
+  
+  // الربط بالفاتورة
+  invoiceId: varchar("invoice_id"),
+  
+  // توقيتات
+  expiresAt: timestamp("expires_at"),
+  approvedAt: timestamp("approved_at"),
+  capturedAt: timestamp("captured_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertCheckoutSessionSchema = createInsertSchema(checkoutSessions).omit({ id: true, createdAt: true });
+export type InsertCheckoutSession = z.infer<typeof insertCheckoutSessionSchema>;
+export type CheckoutSession = typeof checkoutSessions.$inferSelect;
+
+// Webhooks المرسلة للتجار
+export const webhookEvents = pgTable("webhook_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  merchantId: varchar("merchant_id").notNull(),
+  eventType: text("event_type").notNull(), // checkout.approved, payment.captured, refund.completed
+  resourceType: text("resource_type").notNull(), // checkout, payment, refund
+  resourceId: varchar("resource_id").notNull(),
+  payload: jsonb("payload").notNull(),
+  webhookUrl: text("webhook_url").notNull(),
+  
+  // حالة الإرسال
+  status: text("status").default("pending"), // pending, sent, failed, retrying
+  httpStatus: integer("http_status"),
+  responseBody: text("response_body"),
+  attempts: integer("attempts").default(0),
+  maxAttempts: integer("max_attempts").default(5),
+  nextRetryAt: timestamp("next_retry_at"),
+  
+  sentAt: timestamp("sent_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertWebhookEventSchema = createInsertSchema(webhookEvents).omit({ id: true, createdAt: true });
+export type InsertWebhookEvent = z.infer<typeof insertWebhookEventSchema>;
+export type WebhookEvent = typeof webhookEvents.$inferSelect;
+
+// سجل معاملات التجار
+export const merchantTransactions = pgTable("merchant_transactions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  merchantId: varchar("merchant_id").notNull(),
+  checkoutSessionId: varchar("checkout_session_id").notNull(),
+  transactionType: text("transaction_type").notNull(), // capture, refund, chargeback
+  
+  grossAmount: real("gross_amount").notNull(), // المبلغ الإجمالي
+  commissionAmount: real("commission_amount").notNull(), // عمولة دربي
+  netAmount: real("net_amount").notNull(), // المبلغ الصافي للتاجر
+  
+  status: text("status").default("pending"), // pending, completed, failed
+  settledAt: timestamp("settled_at"),
+  settlementRef: text("settlement_ref"),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertMerchantTransactionSchema = createInsertSchema(merchantTransactions).omit({ id: true, createdAt: true });
+export type InsertMerchantTransaction = z.infer<typeof insertMerchantTransactionSchema>;
+export type MerchantTransaction = typeof merchantTransactions.$inferSelect;
+
+// تسويات التجار
+export const merchantSettlements = pgTable("merchant_settlements", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  merchantId: varchar("merchant_id").notNull(),
+  settlementRef: text("settlement_ref").unique().notNull(), // STL-XXXXXXXX
+  
+  periodStart: timestamp("period_start").notNull(),
+  periodEnd: timestamp("period_end").notNull(),
+  
+  totalTransactions: integer("total_transactions").notNull(),
+  grossAmount: real("gross_amount").notNull(),
+  totalCommission: real("total_commission").notNull(),
+  totalRefunds: real("total_refunds").default(0),
+  netAmount: real("net_amount").notNull(),
+  
+  bankAccount: text("bank_account"),
+  iban: text("iban"),
+  
+  status: text("status").default("pending"), // pending, processing, completed, failed
+  paidAt: timestamp("paid_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertMerchantSettlementSchema = createInsertSchema(merchantSettlements).omit({ id: true, createdAt: true });
+export type InsertMerchantSettlement = z.infer<typeof insertMerchantSettlementSchema>;
+export type MerchantSettlement = typeof merchantSettlements.$inferSelect;
+
+// ==========================================
 // Enums للاستخدام في التطبيق
 // ==========================================
 
@@ -722,3 +907,697 @@ export const PriorityLevels = {
   RESTRICTED: "restricted",
   BLOCKED: "blocked",
 } as const;
+
+// Merchant API Enums
+export const MerchantStatus = {
+  PENDING: "pending",
+  ACTIVE: "active",
+  SUSPENDED: "suspended",
+  CLOSED: "closed",
+} as const;
+
+export const CheckoutStatus = {
+  PENDING: "pending",
+  APPROVED: "approved",
+  CAPTURED: "captured",
+  DECLINED: "declined",
+  EXPIRED: "expired",
+  REFUNDED: "refunded",
+  CANCELLED: "cancelled",
+} as const;
+
+export const WebhookEventTypes = {
+  CHECKOUT_APPROVED: "checkout.approved",
+  CHECKOUT_DECLINED: "checkout.declined",
+  CHECKOUT_EXPIRED: "checkout.expired",
+  PAYMENT_CAPTURED: "payment.captured",
+  PAYMENT_FAILED: "payment.failed",
+  REFUND_COMPLETED: "refund.completed",
+  REFUND_FAILED: "refund.failed",
+  INSTALLMENT_PAID: "installment.paid",
+  INSTALLMENT_OVERDUE: "installment.overdue",
+} as const;
+
+export const ApiKeyTypes = {
+  SANDBOX: "sandbox",
+  PRODUCTION: "production",
+} as const;
+
+// ==========================================
+// النظام الإداري (Admin Management System)
+// ==========================================
+
+// أدوار المستخدمين الإداريين
+export const AdminRoles = {
+  SUPER_ADMIN: "super_admin",
+  MANAGER: "manager",
+  EMPLOYEE: "employee",
+  AUDITOR: "auditor",
+} as const;
+
+// حالات طلبات سير العمل
+export const WorkflowStatus = {
+  PENDING: "pending",
+  APPROVED: "approved",
+  REJECTED: "rejected",
+  CANCELLED: "cancelled",
+} as const;
+
+// أنواع طلبات سير العمل
+export const WorkflowTypes = {
+  MERCHANT_ACTIVATION: "merchant_activation",
+  CREDIT_LIMIT_CHANGE: "credit_limit_change",
+  REFUND_REQUEST: "refund_request",
+  DISPUTE_RESOLUTION: "dispute_resolution",
+  ACCOUNT_SUSPENSION: "account_suspension",
+} as const;
+
+// ==========================================
+// الأدوار الوظيفية (مطابق لهيكل تمارا BNPL)
+// ==========================================
+export const ADMIN_ROLES = {
+  // القيادة التنفيذية
+  CEO: "ceo",                           // الرئيس التنفيذي
+  COO: "coo",                           // مدير العمليات
+  CFO: "cfo",                           // المدير المالي
+  CPO: "cpo",                           // مدير المنتجات
+  
+  // الإدارة الوسطى
+  SUPER_ADMIN: "super_admin",           // مدير النظام
+  OPERATIONS_MANAGER: "operations_manager", // مدير العمليات
+  FINANCE_MANAGER: "finance_manager",   // مدير المالية
+  RISK_MANAGER: "risk_manager",         // مدير المخاطر
+  COMPLIANCE_OFFICER: "compliance_officer", // مسؤول الامتثال
+  
+  // الأقسام التشغيلية
+  CUSTOMER_SERVICE: "customer_service", // خدمة العملاء
+  CUSTOMER_SERVICE_LEAD: "customer_service_lead", // قائد فريق خدمة العملاء
+  ACCOUNTANT: "accountant",             // محاسب
+  SENIOR_ACCOUNTANT: "senior_accountant", // محاسب أول
+  COLLECTIONS: "collections",           // التحصيل
+  COLLECTIONS_LEAD: "collections_lead", // قائد فريق التحصيل
+  FRAUD_ANALYST: "fraud_analyst",       // محلل الاحتيال
+  DATA_ANALYST: "data_analyst",         // محلل البيانات
+  
+  // إدارة التجار والشراكات
+  MERCHANT_SUPPORT: "merchant_support", // دعم التجار
+  PARTNERSHIPS_MANAGER: "partnerships_manager", // مدير الشراكات
+  
+  // إدارة الفروع
+  BRANCH_MANAGER: "branch_manager",     // مدير الفرع
+  ASSISTANT_BRANCH_MANAGER: "assistant_branch_manager", // مساعد مدير الفرع
+  CASHIER: "cashier",                   // أمين الصندوق
+  
+  // الجودة والتدقيق
+  QA_SPECIALIST: "qa_specialist",       // أخصائي الجودة
+  AUDITOR: "auditor",                   // مدقق
+  INTERNAL_AUDITOR: "internal_auditor", // مدقق داخلي
+  
+  // الموارد البشرية
+  HR_MANAGER: "hr_manager",             // مدير الموارد البشرية
+  TRAINING_OFFICER: "training_officer", // مسؤول التدريب
+} as const;
+
+// الصلاحيات التفصيلية
+export const PERMISSIONS = {
+  // إدارة المستخدمين
+  VIEW_USERS: "view_users",
+  CREATE_USER: "create_user",
+  EDIT_USER: "edit_user",
+  DELETE_USER: "delete_user",
+  SUSPEND_USER: "suspend_user",
+  
+  // إدارة التجار
+  VIEW_MERCHANTS: "view_merchants",
+  CREATE_MERCHANT: "create_merchant",
+  EDIT_MERCHANT: "edit_merchant",
+  ACTIVATE_MERCHANT: "activate_merchant",
+  SUSPEND_MERCHANT: "suspend_merchant",
+  
+  // إدارة الفواتير
+  VIEW_INVOICES: "view_invoices",
+  CREATE_INVOICE: "create_invoice",
+  EDIT_INVOICE: "edit_invoice",
+  CANCEL_INVOICE: "cancel_invoice",
+  REFUND_INVOICE: "refund_invoice",
+  
+  // الإدارة المالية
+  VIEW_FINANCIAL_REPORTS: "view_financial_reports",
+  PROCESS_PAYMENTS: "process_payments",
+  MANAGE_SETTLEMENTS: "manage_settlements",
+  APPROVE_REFUNDS: "approve_refunds",
+  
+  // إدارة المخاطر والائتمان
+  VIEW_CREDIT_REPORTS: "view_credit_reports",
+  MODIFY_CREDIT_LIMIT: "modify_credit_limit",
+  APPROVE_CREDIT_REQUEST: "approve_credit_request",
+  VIEW_RISK_ANALYTICS: "view_risk_analytics",
+  
+  // الامتثال
+  VIEW_COMPLIANCE_REPORTS: "view_compliance_reports",
+  MANAGE_AML_CHECKS: "manage_aml_checks",
+  MANAGE_KYC: "manage_kyc",
+  REGULATORY_REPORTING: "regulatory_reporting",
+  
+  // مكافحة الاحتيال
+  VIEW_FRAUD_ALERTS: "view_fraud_alerts",
+  INVESTIGATE_FRAUD: "investigate_fraud",
+  BLOCK_TRANSACTIONS: "block_transactions",
+  
+  // التحصيل
+  VIEW_OVERDUE: "view_overdue",
+  MANAGE_PAYMENT_PLANS: "manage_payment_plans",
+  ESCALATE_COLLECTIONS: "escalate_collections",
+  
+  // خدمة العملاء
+  VIEW_TICKETS: "view_tickets",
+  MANAGE_TICKETS: "manage_tickets",
+  ESCALATE_TICKETS: "escalate_tickets",
+  
+  // إدارة الفروع
+  VIEW_BRANCH: "view_branch",
+  MANAGE_BRANCH_STAFF: "manage_branch_staff",
+  VIEW_BRANCH_REPORTS: "view_branch_reports",
+  
+  // نقاط البيع
+  POS_CREATE_INVOICE: "pos_create_invoice",
+  POS_PROCESS_PAYMENT: "pos_process_payment",
+  POS_VIEW_TRANSACTIONS: "pos_view_transactions",
+  
+  // سير العمل والموافقات
+  VIEW_WORKFLOWS: "view_workflows",
+  APPROVE_WORKFLOWS: "approve_workflows",
+  REJECT_WORKFLOWS: "reject_workflows",
+  
+  // النظام والإعدادات
+  VIEW_SYSTEM_SETTINGS: "view_system_settings",
+  MANAGE_SYSTEM_SETTINGS: "manage_system_settings",
+  VIEW_AUDIT_LOGS: "view_audit_logs",
+  MANAGE_ADMIN_USERS: "manage_admin_users",
+} as const;
+
+// مصفوفة الصلاحيات لكل دور
+export const ROLE_PERMISSIONS: Record<string, string[]> = {
+  [ADMIN_ROLES.CEO]: Object.values(PERMISSIONS),
+  [ADMIN_ROLES.COO]: Object.values(PERMISSIONS),
+  [ADMIN_ROLES.CFO]: [
+    PERMISSIONS.VIEW_FINANCIAL_REPORTS, PERMISSIONS.PROCESS_PAYMENTS, 
+    PERMISSIONS.MANAGE_SETTLEMENTS, PERMISSIONS.APPROVE_REFUNDS,
+    PERMISSIONS.VIEW_INVOICES, PERMISSIONS.VIEW_MERCHANTS,
+    PERMISSIONS.VIEW_AUDIT_LOGS, PERMISSIONS.APPROVE_WORKFLOWS,
+  ],
+  [ADMIN_ROLES.CPO]: [
+    PERMISSIONS.VIEW_USERS, PERMISSIONS.VIEW_MERCHANTS,
+    PERMISSIONS.VIEW_INVOICES, PERMISSIONS.VIEW_RISK_ANALYTICS,
+  ],
+  [ADMIN_ROLES.SUPER_ADMIN]: Object.values(PERMISSIONS),
+  [ADMIN_ROLES.OPERATIONS_MANAGER]: [
+    PERMISSIONS.VIEW_USERS, PERMISSIONS.VIEW_MERCHANTS, PERMISSIONS.ACTIVATE_MERCHANT,
+    PERMISSIONS.SUSPEND_MERCHANT, PERMISSIONS.VIEW_INVOICES, PERMISSIONS.VIEW_WORKFLOWS,
+    PERMISSIONS.APPROVE_WORKFLOWS, PERMISSIONS.MANAGE_ADMIN_USERS,
+  ],
+  [ADMIN_ROLES.FINANCE_MANAGER]: [
+    PERMISSIONS.VIEW_FINANCIAL_REPORTS, PERMISSIONS.PROCESS_PAYMENTS,
+    PERMISSIONS.MANAGE_SETTLEMENTS, PERMISSIONS.APPROVE_REFUNDS,
+    PERMISSIONS.VIEW_INVOICES, PERMISSIONS.VIEW_AUDIT_LOGS,
+  ],
+  [ADMIN_ROLES.RISK_MANAGER]: [
+    PERMISSIONS.VIEW_CREDIT_REPORTS, PERMISSIONS.MODIFY_CREDIT_LIMIT,
+    PERMISSIONS.APPROVE_CREDIT_REQUEST, PERMISSIONS.VIEW_RISK_ANALYTICS,
+    PERMISSIONS.VIEW_USERS, PERMISSIONS.VIEW_FRAUD_ALERTS,
+  ],
+  [ADMIN_ROLES.COMPLIANCE_OFFICER]: [
+    PERMISSIONS.VIEW_COMPLIANCE_REPORTS, PERMISSIONS.MANAGE_AML_CHECKS,
+    PERMISSIONS.MANAGE_KYC, PERMISSIONS.REGULATORY_REPORTING,
+    PERMISSIONS.VIEW_USERS, PERMISSIONS.VIEW_AUDIT_LOGS,
+  ],
+  [ADMIN_ROLES.CUSTOMER_SERVICE]: [
+    PERMISSIONS.VIEW_USERS, PERMISSIONS.VIEW_TICKETS, PERMISSIONS.MANAGE_TICKETS,
+    PERMISSIONS.VIEW_INVOICES,
+  ],
+  [ADMIN_ROLES.CUSTOMER_SERVICE_LEAD]: [
+    PERMISSIONS.VIEW_USERS, PERMISSIONS.VIEW_TICKETS, PERMISSIONS.MANAGE_TICKETS,
+    PERMISSIONS.ESCALATE_TICKETS, PERMISSIONS.VIEW_INVOICES,
+  ],
+  [ADMIN_ROLES.ACCOUNTANT]: [
+    PERMISSIONS.VIEW_INVOICES, PERMISSIONS.VIEW_FINANCIAL_REPORTS,
+    PERMISSIONS.PROCESS_PAYMENTS,
+  ],
+  [ADMIN_ROLES.SENIOR_ACCOUNTANT]: [
+    PERMISSIONS.VIEW_INVOICES, PERMISSIONS.VIEW_FINANCIAL_REPORTS,
+    PERMISSIONS.PROCESS_PAYMENTS, PERMISSIONS.MANAGE_SETTLEMENTS,
+  ],
+  [ADMIN_ROLES.COLLECTIONS]: [
+    PERMISSIONS.VIEW_OVERDUE, PERMISSIONS.MANAGE_PAYMENT_PLANS,
+    PERMISSIONS.VIEW_USERS, PERMISSIONS.VIEW_INVOICES,
+  ],
+  [ADMIN_ROLES.COLLECTIONS_LEAD]: [
+    PERMISSIONS.VIEW_OVERDUE, PERMISSIONS.MANAGE_PAYMENT_PLANS,
+    PERMISSIONS.ESCALATE_COLLECTIONS, PERMISSIONS.VIEW_USERS, PERMISSIONS.VIEW_INVOICES,
+  ],
+  [ADMIN_ROLES.FRAUD_ANALYST]: [
+    PERMISSIONS.VIEW_FRAUD_ALERTS, PERMISSIONS.INVESTIGATE_FRAUD,
+    PERMISSIONS.BLOCK_TRANSACTIONS, PERMISSIONS.VIEW_USERS,
+  ],
+  [ADMIN_ROLES.DATA_ANALYST]: [
+    PERMISSIONS.VIEW_FINANCIAL_REPORTS, PERMISSIONS.VIEW_RISK_ANALYTICS,
+    PERMISSIONS.VIEW_USERS, PERMISSIONS.VIEW_INVOICES, PERMISSIONS.VIEW_MERCHANTS,
+  ],
+  [ADMIN_ROLES.MERCHANT_SUPPORT]: [
+    PERMISSIONS.VIEW_MERCHANTS, PERMISSIONS.EDIT_MERCHANT,
+    PERMISSIONS.VIEW_TICKETS, PERMISSIONS.MANAGE_TICKETS,
+  ],
+  [ADMIN_ROLES.PARTNERSHIPS_MANAGER]: [
+    PERMISSIONS.VIEW_MERCHANTS, PERMISSIONS.CREATE_MERCHANT,
+    PERMISSIONS.EDIT_MERCHANT, PERMISSIONS.ACTIVATE_MERCHANT,
+  ],
+  [ADMIN_ROLES.BRANCH_MANAGER]: [
+    PERMISSIONS.VIEW_BRANCH, PERMISSIONS.MANAGE_BRANCH_STAFF,
+    PERMISSIONS.VIEW_BRANCH_REPORTS, PERMISSIONS.POS_CREATE_INVOICE,
+    PERMISSIONS.POS_PROCESS_PAYMENT, PERMISSIONS.POS_VIEW_TRANSACTIONS,
+  ],
+  [ADMIN_ROLES.ASSISTANT_BRANCH_MANAGER]: [
+    PERMISSIONS.VIEW_BRANCH, PERMISSIONS.VIEW_BRANCH_REPORTS,
+    PERMISSIONS.POS_CREATE_INVOICE, PERMISSIONS.POS_PROCESS_PAYMENT,
+  ],
+  [ADMIN_ROLES.CASHIER]: [
+    PERMISSIONS.POS_CREATE_INVOICE, PERMISSIONS.POS_PROCESS_PAYMENT,
+    PERMISSIONS.POS_VIEW_TRANSACTIONS,
+  ],
+  [ADMIN_ROLES.QA_SPECIALIST]: [
+    PERMISSIONS.VIEW_INVOICES, PERMISSIONS.VIEW_TICKETS,
+    PERMISSIONS.VIEW_AUDIT_LOGS,
+  ],
+  [ADMIN_ROLES.AUDITOR]: [
+    PERMISSIONS.VIEW_USERS, PERMISSIONS.VIEW_MERCHANTS, PERMISSIONS.VIEW_INVOICES,
+    PERMISSIONS.VIEW_FINANCIAL_REPORTS, PERMISSIONS.VIEW_AUDIT_LOGS,
+    PERMISSIONS.VIEW_COMPLIANCE_REPORTS, PERMISSIONS.VIEW_WORKFLOWS,
+  ],
+  [ADMIN_ROLES.INTERNAL_AUDITOR]: [
+    PERMISSIONS.VIEW_USERS, PERMISSIONS.VIEW_MERCHANTS, PERMISSIONS.VIEW_INVOICES,
+    PERMISSIONS.VIEW_FINANCIAL_REPORTS, PERMISSIONS.VIEW_AUDIT_LOGS,
+    PERMISSIONS.VIEW_COMPLIANCE_REPORTS, PERMISSIONS.VIEW_WORKFLOWS,
+    PERMISSIONS.VIEW_SYSTEM_SETTINGS,
+  ],
+  [ADMIN_ROLES.HR_MANAGER]: [
+    PERMISSIONS.VIEW_USERS, PERMISSIONS.MANAGE_ADMIN_USERS,
+  ],
+  [ADMIN_ROLES.TRAINING_OFFICER]: [
+    PERMISSIONS.VIEW_USERS,
+  ],
+};
+
+// الأقسام الإدارية
+export const DEPARTMENTS = {
+  EXECUTIVE: "executive",               // القيادة التنفيذية
+  OPERATIONS: "operations",             // العمليات
+  FINANCE: "finance",                   // المالية
+  RISK: "risk",                         // إدارة المخاطر
+  COMPLIANCE: "compliance",             // الامتثال
+  CUSTOMER_SERVICE: "customer_service", // خدمة العملاء
+  COLLECTIONS: "collections",           // التحصيل
+  FRAUD: "fraud",                       // مكافحة الاحتيال
+  DATA: "data",                         // تحليل البيانات
+  MERCHANTS: "merchants",               // إدارة التجار
+  BRANCHES: "branches",                 // إدارة الفروع
+  QUALITY: "quality",                   // الجودة
+  AUDIT: "audit",                       // التدقيق
+  HR: "hr",                             // الموارد البشرية
+} as const;
+
+// جدول المستخدمين الإداريين
+export const adminUsers = pgTable("admin_users", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  fullName: text("full_name").notNull(),
+  fullNameAr: text("full_name_ar"),
+  phone: text("phone"),
+  role: text("role").notNull().default("employee"),
+  department: text("department"),
+  branchId: varchar("branch_id"),
+  permissions: jsonb("permissions").default([]),
+  isActive: boolean("is_active").default(true),
+  lastLoginAt: timestamp("last_login_at"),
+  lastLoginIp: text("last_login_ip"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAdminUserSchema = createInsertSchema(adminUsers).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertAdminUser = z.infer<typeof insertAdminUserSchema>;
+export type AdminUser = typeof adminUsers.$inferSelect;
+
+// سجل تسجيل الدخول
+export const adminLoginHistory = pgTable("admin_login_history", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  adminUserId: varchar("admin_user_id").notNull(),
+  loginAt: timestamp("login_at").defaultNow(),
+  logoutAt: timestamp("logout_at"),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  loginStatus: text("login_status").default("success"),
+  failureReason: text("failure_reason"),
+});
+
+export const insertAdminLoginHistorySchema = createInsertSchema(adminLoginHistory).omit({ id: true });
+export type InsertAdminLoginHistory = z.infer<typeof insertAdminLoginHistorySchema>;
+export type AdminLoginHistory = typeof adminLoginHistory.$inferSelect;
+
+// سجل الأحداث والتدقيق
+export const auditLogs = pgTable("audit_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  adminUserId: varchar("admin_user_id"),
+  action: text("action").notNull(),
+  resourceType: text("resource_type").notNull(),
+  resourceId: varchar("resource_id"),
+  oldValue: jsonb("old_value"),
+  newValue: jsonb("new_value"),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  description: text("description"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, createdAt: true });
+export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
+export type AuditLog = typeof auditLogs.$inferSelect;
+
+// طلبات سير العمل (Workflow Requests)
+export const workflowRequests = pgTable("workflow_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  requestType: text("request_type").notNull(),
+  requesterId: varchar("requester_id"),
+  requesterType: text("requester_type").default("system"),
+  resourceType: text("resource_type").notNull(),
+  resourceId: varchar("resource_id").notNull(),
+  payload: jsonb("payload"),
+  priority: text("priority").default("normal"),
+  status: text("status").default("pending"),
+  assignedTo: varchar("assigned_to"),
+  reviewedBy: varchar("reviewed_by"),
+  reviewNote: text("review_note"),
+  reviewedAt: timestamp("reviewed_at"),
+  dueDate: timestamp("due_date"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertWorkflowRequestSchema = createInsertSchema(workflowRequests).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertWorkflowRequest = z.infer<typeof insertWorkflowRequestSchema>;
+export type WorkflowRequest = typeof workflowRequests.$inferSelect;
+
+// إعدادات النظام
+export const systemSettings = pgTable("system_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  settingKey: text("setting_key").notNull().unique(),
+  settingValue: jsonb("setting_value"),
+  settingType: text("setting_type").default("string"),
+  description: text("description"),
+  isEditable: boolean("is_editable").default(true),
+  updatedBy: varchar("updated_by"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertSystemSettingSchema = createInsertSchema(systemSettings).omit({ id: true, updatedAt: true });
+export type InsertSystemSetting = z.infer<typeof insertSystemSettingSchema>;
+export type SystemSetting = typeof systemSettings.$inferSelect;
+
+// الإشعارات الإدارية
+export const adminNotifications = pgTable("admin_notifications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  adminUserId: varchar("admin_user_id"),
+  title: text("title").notNull(),
+  message: text("message").notNull(),
+  notificationType: text("notification_type").default("info"),
+  isRead: boolean("is_read").default(false),
+  actionUrl: text("action_url"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAdminNotificationSchema = createInsertSchema(adminNotifications).omit({ id: true, createdAt: true });
+export type InsertAdminNotification = z.infer<typeof insertAdminNotificationSchema>;
+export type AdminNotification = typeof adminNotifications.$inferSelect;
+
+// الفروع
+export const branches = pgTable("branches", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  nameAr: text("name_ar"),
+  address: text("address"),
+  city: text("city"),
+  phone: text("phone"),
+  managerId: varchar("manager_id"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertBranchSchema = createInsertSchema(branches).omit({ id: true, createdAt: true });
+export type InsertBranch = z.infer<typeof insertBranchSchema>;
+export type Branch = typeof branches.$inferSelect;
+
+// ==========================================
+// 15. الهيكل التنظيمي - Organizational Structure
+// ==========================================
+
+// جدول الأقسام الإدارية - Departments Table
+export const departments = pgTable("departments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: text("code").notNull().unique(),              // رمز القسم - Department Code
+  nameEn: text("name_en").notNull(),                  // اسم القسم بالإنجليزية - English Name
+  nameAr: text("name_ar").notNull(),                  // اسم القسم بالعربية - Arabic Name
+  descriptionEn: text("description_en"),              // وصف القسم بالإنجليزية - English Description
+  descriptionAr: text("description_ar"),              // وصف القسم بالعربية - Arabic Description
+  parentDepartmentId: varchar("parent_department_id"), // القسم الأب - Parent Department
+  managerId: varchar("manager_id"),                   // مدير القسم - Department Manager
+  level: integer("level").default(1),                 // مستوى القسم في الهيكل - Hierarchy Level
+  sortOrder: integer("sort_order").default(0),        // ترتيب العرض - Display Order
+  isActive: boolean("is_active").default(true),       // حالة النشاط - Active Status
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertDepartmentSchema = createInsertSchema(departments).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertDepartment = z.infer<typeof insertDepartmentSchema>;
+export type Department = typeof departments.$inferSelect;
+
+// جدول الأدوار الوظيفية - Roles Table
+export const roles = pgTable("roles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: text("code").notNull().unique(),              // رمز الدور - Role Code
+  nameEn: text("name_en").notNull(),                  // اسم الدور بالإنجليزية - English Name
+  nameAr: text("name_ar").notNull(),                  // اسم الدور بالعربية - Arabic Name
+  descriptionEn: text("description_en"),              // وصف الدور بالإنجليزية - English Description
+  descriptionAr: text("description_ar"),              // وصف الدور بالعربية - Arabic Description
+  departmentId: varchar("department_id"),             // القسم التابع له - Department
+  level: integer("level").default(1),                 // المستوى الوظيفي - Job Level (1=CEO, 6=Staff)
+  reportsToRoleId: varchar("reports_to_role_id"),     // يرفع التقارير إلى - Reports To
+  salaryGradeMin: integer("salary_grade_min"),        // الحد الأدنى للدرجة الوظيفية - Min Salary Grade
+  salaryGradeMax: integer("salary_grade_max"),        // الحد الأقصى للدرجة الوظيفية - Max Salary Grade
+  isManagement: boolean("is_management").default(false), // هل دور إداري - Is Management Role
+  isActive: boolean("is_active").default(true),       // حالة النشاط - Active Status
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertRoleSchema = createInsertSchema(roles).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertRole = z.infer<typeof insertRoleSchema>;
+export type Role = typeof roles.$inferSelect;
+
+// جدول الصلاحيات - Permissions Table
+export const permissions = pgTable("permissions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: text("code").notNull().unique(),              // رمز الصلاحية - Permission Code
+  nameEn: text("name_en").notNull(),                  // اسم الصلاحية بالإنجليزية - English Name
+  nameAr: text("name_ar").notNull(),                  // اسم الصلاحية بالعربية - Arabic Name
+  descriptionEn: text("description_en"),              // وصف الصلاحية بالإنجليزية - English Description
+  descriptionAr: text("description_ar"),              // وصف الصلاحية بالعربية - Arabic Description
+  module: text("module").notNull(),                   // الوحدة/النظام الفرعي - Module
+  category: text("category"),                         // تصنيف الصلاحية - Category
+  riskLevel: text("risk_level").default("low"),       // مستوى الخطورة - Risk Level (low, medium, high, critical)
+  requiresApproval: boolean("requires_approval").default(false), // يتطلب موافقة - Requires Approval
+  isActive: boolean("is_active").default(true),       // حالة النشاط - Active Status
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertPermissionSchema = createInsertSchema(permissions).omit({ id: true, createdAt: true });
+export type InsertPermission = z.infer<typeof insertPermissionSchema>;
+export type Permission = typeof permissions.$inferSelect;
+
+// جدول ربط الأدوار بالصلاحيات - Role Permissions (Many-to-Many)
+export const rolePermissions = pgTable("role_permissions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  roleId: varchar("role_id").notNull(),               // معرف الدور - Role ID
+  permissionId: varchar("permission_id").notNull(),   // معرف الصلاحية - Permission ID
+  grantedAt: timestamp("granted_at").defaultNow(),    // تاريخ المنح - Grant Date
+  grantedBy: varchar("granted_by"),                   // من قام بالمنح - Granted By
+  expiresAt: timestamp("expires_at"),                 // تاريخ الانتهاء - Expiry Date
+  isActive: boolean("is_active").default(true),       // حالة النشاط - Active Status
+});
+
+export const insertRolePermissionSchema = createInsertSchema(rolePermissions).omit({ id: true, grantedAt: true });
+export type InsertRolePermission = z.infer<typeof insertRolePermissionSchema>;
+export type RolePermission = typeof rolePermissions.$inferSelect;
+
+// جدول المهام اليومية للأدوار - Role Daily Tasks
+export const roleDailyTasks = pgTable("role_daily_tasks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  roleId: varchar("role_id").notNull(),               // معرف الدور - Role ID
+  taskNameEn: text("task_name_en").notNull(),         // اسم المهمة بالإنجليزية - English Task Name
+  taskNameAr: text("task_name_ar").notNull(),         // اسم المهمة بالعربية - Arabic Task Name
+  descriptionEn: text("description_en"),              // وصف المهمة بالإنجليزية - English Description
+  descriptionAr: text("description_ar"),              // وصف المهمة بالعربية - Arabic Description
+  frequency: text("frequency").default("daily"),      // التكرار - Frequency (daily, weekly, monthly)
+  priority: integer("priority").default(1),           // الأولوية - Priority
+  estimatedHours: real("estimated_hours"),            // الوقت المتوقع بالساعات - Estimated Hours
+  kpiMetric: text("kpi_metric"),                      // مؤشر الأداء - KPI Metric
+  sortOrder: integer("sort_order").default(0),        // ترتيب العرض - Display Order
+  isActive: boolean("is_active").default(true),       // حالة النشاط - Active Status
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertRoleDailyTaskSchema = createInsertSchema(roleDailyTasks).omit({ id: true, createdAt: true });
+export type InsertRoleDailyTask = z.infer<typeof insertRoleDailyTaskSchema>;
+export type RoleDailyTask = typeof roleDailyTasks.$inferSelect;
+
+// جدول علاقات الأقسام - Department Relationships (Cross-Department Collaboration)
+export const departmentRelationships = pgTable("department_relationships", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  fromDepartmentId: varchar("from_department_id").notNull(),  // من القسم - From Department
+  toDepartmentId: varchar("to_department_id").notNull(),      // إلى القسم - To Department
+  relationshipType: text("relationship_type").notNull(),       // نوع العلاقة - Relationship Type
+  descriptionEn: text("description_en"),                       // وصف العلاقة بالإنجليزية - English Description
+  descriptionAr: text("description_ar"),                       // وصف العلاقة بالعربية - Arabic Description
+  dataFlowDirection: text("data_flow_direction").default("bidirectional"), // اتجاه تدفق البيانات - Data Flow Direction
+  priority: text("priority").default("normal"),                // أهمية العلاقة - Importance
+  isActive: boolean("is_active").default(true),                // حالة النشاط - Active Status
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertDepartmentRelationshipSchema = createInsertSchema(departmentRelationships).omit({ id: true, createdAt: true });
+export type InsertDepartmentRelationship = z.infer<typeof insertDepartmentRelationshipSchema>;
+export type DepartmentRelationship = typeof departmentRelationships.$inferSelect;
+
+// جدول سلسلة التقارير - Reporting Chain (الهيكل الهرمي للموظفين)
+export const reportingChain = pgTable("reporting_chain", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  employeeId: varchar("employee_id").notNull(),        // معرف الموظف - Employee ID
+  supervisorId: varchar("supervisor_id").notNull(),    // معرف المشرف - Supervisor ID
+  relationshipType: text("relationship_type").default("direct"), // نوع العلاقة - Type (direct, dotted, matrix)
+  effectiveFrom: timestamp("effective_from").defaultNow(),       // تاريخ البداية - Effective From
+  effectiveTo: timestamp("effective_to"),                        // تاريخ النهاية - Effective To
+  isActive: boolean("is_active").default(true),        // حالة النشاط - Active Status
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertReportingChainSchema = createInsertSchema(reportingChain).omit({ id: true, createdAt: true });
+export type InsertReportingChain = z.infer<typeof insertReportingChainSchema>;
+export type ReportingChain = typeof reportingChain.$inferSelect;
+
+// جدول سير العمل النموذجي - Workflow Templates
+export const workflowTemplates = pgTable("workflow_templates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: text("code").notNull().unique(),               // رمز سير العمل - Workflow Code
+  nameEn: text("name_en").notNull(),                   // اسم سير العمل بالإنجليزية - English Name
+  nameAr: text("name_ar").notNull(),                   // اسم سير العمل بالعربية - Arabic Name
+  descriptionEn: text("description_en"),               // وصف سير العمل بالإنجليزية - English Description
+  descriptionAr: text("description_ar"),               // وصف سير العمل بالعربية - Arabic Description
+  category: text("category"),                          // تصنيف سير العمل - Category
+  estimatedDuration: integer("estimated_duration"),    // المدة المتوقعة بالدقائق - Estimated Duration (minutes)
+  isActive: boolean("is_active").default(true),        // حالة النشاط - Active Status
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertWorkflowTemplateSchema = createInsertSchema(workflowTemplates).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertWorkflowTemplate = z.infer<typeof insertWorkflowTemplateSchema>;
+export type WorkflowTemplate = typeof workflowTemplates.$inferSelect;
+
+// جدول خطوات سير العمل - Workflow Steps
+export const workflowSteps = pgTable("workflow_steps", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  workflowTemplateId: varchar("workflow_template_id").notNull(), // معرف سير العمل - Workflow ID
+  stepNumber: integer("step_number").notNull(),                   // رقم الخطوة - Step Number
+  departmentId: varchar("department_id"),                         // القسم المسؤول - Responsible Department
+  roleId: varchar("role_id"),                                     // الدور المسؤول - Responsible Role
+  actionNameEn: text("action_name_en").notNull(),                 // اسم الإجراء بالإنجليزية - English Action
+  actionNameAr: text("action_name_ar").notNull(),                 // اسم الإجراء بالعربية - Arabic Action
+  descriptionEn: text("description_en"),                          // وصف الإجراء بالإنجليزية - English Description
+  descriptionAr: text("description_ar"),                          // وصف الإجراء بالعربية - Arabic Description
+  requiredPermissions: jsonb("required_permissions").default([]), // الصلاحيات المطلوبة - Required Permissions
+  slaMinutes: integer("sla_minutes"),                             // الوقت المحدد للإنجاز - SLA in Minutes
+  isOptional: boolean("is_optional").default(false),              // خطوة اختيارية - Is Optional
+  canSkip: boolean("can_skip").default(false),                    // يمكن تخطيها - Can Skip
+  nextStepOnApprove: integer("next_step_on_approve"),             // الخطوة التالية عند الموافقة - Next on Approve
+  nextStepOnReject: integer("next_step_on_reject"),               // الخطوة التالية عند الرفض - Next on Reject
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertWorkflowStepSchema = createInsertSchema(workflowSteps).omit({ id: true, createdAt: true });
+export type InsertWorkflowStep = z.infer<typeof insertWorkflowStepSchema>;
+export type WorkflowStep = typeof workflowSteps.$inferSelect;
+
+// جدول مستويات الموافقة - Approval Levels
+export const approvalLevels = pgTable("approval_levels", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: text("code").notNull().unique(),               // رمز المستوى - Level Code
+  nameEn: text("name_en").notNull(),                   // اسم المستوى بالإنجليزية - English Name
+  nameAr: text("name_ar").notNull(),                   // اسم المستوى بالعربية - Arabic Name
+  minAmount: decimal("min_amount", { precision: 15, scale: 2 }), // الحد الأدنى للمبلغ - Min Amount
+  maxAmount: decimal("max_amount", { precision: 15, scale: 2 }), // الحد الأقصى للمبلغ - Max Amount
+  approverRoleIds: jsonb("approver_role_ids").default([]),       // الأدوار المخولة بالموافقة - Approver Roles
+  requiresMultipleApprovers: boolean("requires_multiple_approvers").default(false), // يتطلب موافقين متعددين - Multiple Approvers
+  minimumApprovers: integer("minimum_approvers").default(1),     // الحد الأدنى من الموافقين - Minimum Approvers
+  escalationTimeMinutes: integer("escalation_time_minutes"),     // وقت التصعيد بالدقائق - Escalation Time
+  escalateToRoleId: varchar("escalate_to_role_id"),              // تصعيد إلى دور - Escalate To Role
+  isActive: boolean("is_active").default(true),                  // حالة النشاط - Active Status
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertApprovalLevelSchema = createInsertSchema(approvalLevels).omit({ id: true, createdAt: true });
+export type InsertApprovalLevel = z.infer<typeof insertApprovalLevelSchema>;
+export type ApprovalLevel = typeof approvalLevels.$inferSelect;
+
+// جدول تفويض الصلاحيات - Delegation of Authority
+export const authorityDelegations = pgTable("authority_delegations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  delegatorId: varchar("delegator_id").notNull(),      // المفوض - Delegator (Admin User ID)
+  delegateeId: varchar("delegatee_id").notNull(),      // المفوض إليه - Delegatee (Admin User ID)
+  delegationType: text("delegation_type").default("full"), // نوع التفويض - Type (full, partial, specific)
+  permissionIds: jsonb("permission_ids").default([]),  // الصلاحيات المفوضة - Delegated Permissions
+  reasonEn: text("reason_en"),                         // سبب التفويض بالإنجليزية - English Reason
+  reasonAr: text("reason_ar"),                         // سبب التفويض بالعربية - Arabic Reason
+  maxApprovalAmount: decimal("max_approval_amount", { precision: 15, scale: 2 }), // الحد الأقصى للموافقة - Max Approval
+  effectiveFrom: timestamp("effective_from").notNull(), // تاريخ البداية - Effective From
+  effectiveTo: timestamp("effective_to").notNull(),     // تاريخ النهاية - Effective To
+  isActive: boolean("is_active").default(true),        // حالة النشاط - Active Status
+  approvedBy: varchar("approved_by"),                  // موافق عليه من - Approved By
+  approvedAt: timestamp("approved_at"),                // تاريخ الموافقة - Approval Date
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAuthorityDelegationSchema = createInsertSchema(authorityDelegations).omit({ id: true, createdAt: true });
+export type InsertAuthorityDelegation = z.infer<typeof insertAuthorityDelegationSchema>;
+export type AuthorityDelegation = typeof authorityDelegations.$inferSelect;
+
+// جدول مؤشرات الأداء للأقسام - Department KPIs
+export const departmentKpis = pgTable("department_kpis", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  departmentId: varchar("department_id").notNull(),    // معرف القسم - Department ID
+  kpiCode: text("kpi_code").notNull(),                 // رمز المؤشر - KPI Code
+  kpiNameEn: text("kpi_name_en").notNull(),            // اسم المؤشر بالإنجليزية - English Name
+  kpiNameAr: text("kpi_name_ar").notNull(),            // اسم المؤشر بالعربية - Arabic Name
+  descriptionEn: text("description_en"),               // وصف المؤشر بالإنجليزية - English Description
+  descriptionAr: text("description_ar"),               // وصف المؤشر بالعربية - Arabic Description
+  targetValue: real("target_value"),                   // القيمة المستهدفة - Target Value
+  currentValue: real("current_value"),                 // القيمة الحالية - Current Value
+  unit: text("unit"),                                  // وحدة القياس - Unit
+  frequency: text("frequency").default("monthly"),     // تكرار القياس - Frequency
+  lastUpdated: timestamp("last_updated"),              // آخر تحديث - Last Updated
+  isActive: boolean("is_active").default(true),        // حالة النشاط - Active Status
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertDepartmentKpiSchema = createInsertSchema(departmentKpis).omit({ id: true, createdAt: true });
+export type InsertDepartmentKpi = z.infer<typeof insertDepartmentKpiSchema>;
+export type DepartmentKpi = typeof departmentKpis.$inferSelect;
