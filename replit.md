@@ -1,7 +1,7 @@
-# عبّ الآن - نظام تقسيط وقود السيارات
+# دربي (Darby) - نظام تقسيط وقود السيارات BNPL
 
 ## نظرة عامة
-نظام متكامل لتقسيط وقود السيارات يتكون من ثلاث خدمات رئيسية:
+نظام متكامل لتقسيط وقود السيارات مطابق لمنصات BNPL مثل تمارا وتابي. يتكون من ثلاث خدمات رئيسية:
 
 ### كتالوج السيارات الشامل
 **400 سيارة** من **64 ماركة** عالمية بما في ذلك:
@@ -102,6 +102,45 @@ fuel_prices                # أسعار الوقود
 - بنزين 95: 2.33
 - ديزل: 0.52
 
+### نظام Merchant API (شركاء الأعمال)
+
+#### نقاط API للتجار
+- `POST /api/merchant/register` - تسجيل تاجر جديد
+- `POST /api/merchant/checkout` - إنشاء جلسة دفع (يتطلب Authorization)
+- `GET /api/merchant/checkout/:sessionToken` - حالة الجلسة
+- `POST /api/merchant/checkout/:sessionToken/cancel` - إلغاء الجلسة
+- `GET /api/merchant/stats` - إحصائيات التاجر
+- `GET /api/checkout/:sessionToken` - صفحة الدفع للعميل
+- `POST /api/checkout/:sessionToken/approve` - موافقة العميل
+
+#### جداول التجار
+```
+merchants              # بيانات التجار
+merchant_api_keys      # مفاتيح API (sandbox/production)
+checkout_sessions      # جلسات الدفع
+webhook_events         # سجل Webhooks
+merchant_transactions  # المعاملات
+merchant_settlements   # التسويات
+```
+
+#### نظام المصادقة
+- Bearer Token مع Secret Key
+- مفاتيح Sandbox: pk_test_xxx / sk_test_xxx
+- مفاتيح Production: pk_live_xxx / sk_live_xxx
+
+#### Webhook Events
+- `checkout.approved` - موافقة العميل
+- `checkout.declined` - رفض العميل
+- `payment.captured` - تم الدفع
+- `refund.completed` - تم الاسترداد
+- `installment.paid` - تم سداد قسط
+- `installment.overdue` - قسط متأخر
+
+#### نموذج العمولة
+- عمولة افتراضية: 3%
+- قابلة للتخصيص لكل تاجر
+- التسوية بعد خصم العمولة
+
 ### نظام التحقق من العملاء (Verification & KYC)
 
 #### التحقق من الهوية (نفاذ)
@@ -186,3 +225,50 @@ npm run db:push # مزامنة قاعدة البيانات
 
 ### التقارير
 - `docs/SECURITY_REPORT.md` - تقرير اختبارات الأمان الشامل
+
+## نظام الأدوار والصلاحيات (RBAC)
+
+### الأدوار الوظيفية (27 دور مطابق لهيكل تمارا)
+
+#### القيادة التنفيذية
+- **CEO**: الرئيس التنفيذي (جميع الصلاحيات)
+- **COO**: مدير العمليات التنفيذي
+- **CFO**: المدير المالي
+- **CPO**: مدير المنتجات
+
+#### الإدارة الوسطى
+- **super_admin**: مدير النظام
+- **operations_manager**: مدير العمليات
+- **finance_manager**: مدير المالية
+- **risk_manager**: مدير المخاطر
+- **compliance_officer**: مسؤول الامتثال
+
+#### الأقسام التشغيلية
+- **customer_service / customer_service_lead**: خدمة العملاء
+- **accountant / senior_accountant**: المحاسبة
+- **collections / collections_lead**: التحصيل
+- **fraud_analyst**: محلل الاحتيال
+- **data_analyst**: محلل البيانات
+
+#### إدارة التجار والشراكات
+- **merchant_support**: دعم التجار
+- **partnerships_manager**: مدير الشراكات
+
+#### إدارة الفروع
+- **branch_manager**: مدير الفرع
+- **assistant_branch_manager**: مساعد مدير الفرع
+- **cashier**: أمين الصندوق
+
+#### الجودة والتدقيق
+- **qa_specialist**: أخصائي الجودة
+- **auditor / internal_auditor**: المدققين
+
+#### الموارد البشرية
+- **hr_manager**: مدير الموارد البشرية
+- **training_officer**: مسؤول التدريب
+
+### الأقسام الإدارية (14 قسم)
+executive, operations, finance, risk, compliance, customer_service, collections, fraud, data, merchants, branches, quality, audit, hr
+
+### الصلاحيات التفصيلية (50+ صلاحية)
+إدارة المستخدمين، إدارة التجار، الفواتير، المالية، المخاطر، الامتثال، الاحتيال، التحصيل، الفروع، نقاط البيع، سير العمل، إعدادات النظام
