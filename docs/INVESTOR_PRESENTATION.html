@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>دربي - وثيقة المستثمرين | Derby Investor Deck</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;800&display=swap');
+    
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    body {
+      font-family: 'Tajawal', sans-serif;
+      background: #f8fafc;
+      color: #1e293b;
+      line-height: 1.7;
+    }
+    
+    .page {
+      background: white;
+      max-width: 900px;
+      margin: 20px auto;
+      padding: 60px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+      page-break-after: always;
+    }
+    
+    @media print {
+      body { background: white; }
+      .page { 
+        box-shadow: none; 
+        margin: 0; 
+        padding: 40px;
+        page-break-after: always;
+      }
+      .no-print { display: none !important; }
+    }
+    
+    .header {
+      text-align: center;
+      margin-bottom: 40px;
+      padding-bottom: 30px;
+      border-bottom: 3px solid #f97316;
+    }
+    
+    .logo {
+      width: 80px;
+      height: 80px;
+      background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 20px;
+      font-size: 40px;
+      color: white;
+    }
+    
+    h1 {
+      font-size: 36px;
+      color: #0f172a;
+      margin-bottom: 10px;
+    }
+    
+    h2 {
+      font-size: 24px;
+      color: #f97316;
+      margin: 30px 0 20px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid #fed7aa;
+    }
+    
+    h3 {
+      font-size: 18px;
+      color: #1e293b;
+      margin: 20px 0 10px;
+    }
+    
+    .subtitle {
+      font-size: 18px;
+      color: #64748b;
+    }
+    
+    .highlight-box {
+      background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
+      border: 2px solid #fdba74;
+      border-radius: 16px;
+      padding: 25px;
+      margin: 20px 0;
+    }
+    
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+      margin: 30px 0;
+    }
+    
+    .stat-card {
+      background: #f8fafc;
+      border-radius: 12px;
+      padding: 25px;
+      text-align: center;
+      border: 1px solid #e2e8f0;
+    }
+    
+    .stat-value {
+      font-size: 32px;
+      font-weight: 800;
+      color: #f97316;
+    }
+    
+    .stat-label {
+      font-size: 14px;
+      color: #64748b;
+      margin-top: 5px;
+    }
+    
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+    }
+    
+    th, td {
+      padding: 12px 15px;
+      text-align: right;
+      border-bottom: 1px solid #e2e8f0;
+    }
+    
+    th {
+      background: #f1f5f9;
+      font-weight: 700;
+      color: #0f172a;
+    }
+    
+    tr:hover {
+      background: #f8fafc;
+    }
+    
+    .flow-diagram {
+      background: #f8fafc;
+      border-radius: 16px;
+      padding: 30px;
+      margin: 20px 0;
+    }
+    
+    .flow-step {
+      display: flex;
+      align-items: center;
+      margin: 15px 0;
+    }
+    
+    .flow-number {
+      width: 40px;
+      height: 40px;
+      background: #f97316;
+      color: white;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      margin-left: 15px;
+      flex-shrink: 0;
+    }
+    
+    .flow-content {
+      flex: 1;
+    }
+    
+    .flow-title {
+      font-weight: 700;
+      color: #0f172a;
+    }
+    
+    .flow-desc {
+      font-size: 14px;
+      color: #64748b;
+    }
+    
+    .arrow-down {
+      text-align: center;
+      color: #f97316;
+      font-size: 24px;
+      margin: 5px 0;
+    }
+    
+    .risk-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 15px;
+    }
+    
+    .risk-item {
+      background: #f0fdf4;
+      border: 1px solid #86efac;
+      border-radius: 10px;
+      padding: 15px;
+    }
+    
+    .risk-item.warning {
+      background: #fefce8;
+      border-color: #fde047;
+    }
+    
+    .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    
+    .badge-primary {
+      background: #f97316;
+      color: white;
+    }
+    
+    .badge-success {
+      background: #22c55e;
+      color: white;
+    }
+    
+    .badge-info {
+      background: #3b82f6;
+      color: white;
+    }
+    
+    .decision-id-demo {
+      background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+      color: white;
+      border-radius: 16px;
+      padding: 30px;
+      margin: 20px 0;
+      text-align: center;
+    }
+    
+    .decision-id-demo .id {
+      font-family: monospace;
+      font-size: 28px;
+      color: #f97316;
+      margin: 15px 0;
+    }
+    
+    .print-btn {
+      position: fixed;
+      bottom: 30px;
+      left: 30px;
+      background: #f97316;
+      color: white;
+      border: none;
+      padding: 15px 30px;
+      border-radius: 30px;
+      font-size: 16px;
+      font-family: 'Tajawal', sans-serif;
+      cursor: pointer;
+      box-shadow: 0 4px 15px rgba(249, 115, 22, 0.4);
+    }
+    
+        
+    .footer {
+      text-align: center;
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid #e2e8f0;
+      color: #64748b;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+
+<button class="print-btn no-print" onclick="window.print()" data-testid="button-print-pdf">طباعة PDF</button>
+
+<!-- الصفحة 1: الغلاف -->
+<div class="page">
+  <div class="header">
+    <div class="logo">D</div>
+    <h1>دربي | Derby</h1>
+    <p class="subtitle">نظام تقسيط وقود السيارات الذكي</p>
+    <p style="margin-top: 10px; color: #94a3b8;">Fuel Installment Platform with AI-Powered Decision Support</p>
+  </div>
+  
+  <div class="highlight-box">
+    <h3 style="text-align: center; margin-bottom: 20px;">محرك سنافي - العقل المدبر</h3>
+    <p style="text-align: center; font-size: 16px; color: #64748b;">
+      نظام ذكاء اصطناعي يحول قرارات شراء الوقود من تخمينات إلى توصيات مبنية على البيانات
+    </p>
+  </div>
+  
+  <div class="stat-grid">
+    <div class="stat-card">
+      <div class="stat-value">400+</div>
+      <div class="stat-label">سيارة في الكتالوج</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">64</div>
+      <div class="stat-label">ماركة عالمية</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-value">90%+</div>
+      <div class="stat-label">دقة التنبؤ المستهدفة</div>
+    </div>
+  </div>
+  
+  <h2>لماذا دربي؟</h2>
+  <ul style="list-style: none; padding: 0;">
+    <li style="padding: 10px 0; border-bottom: 1px solid #f1f5f9;">
+      <strong style="color: #f97316;">التحقق المتكامل:</strong> نفاذ + سمة + GOSI لتقليل المخاطر الائتمانية
+    </li>
+    <li style="padding: 10px 0; border-bottom: 1px solid #f1f5f9;">
+      <strong style="color: #f97316;">محرك سنافي:</strong> توصيات ذكية تتعلم من كل تعبئة
+    </li>
+    <li style="padding: 10px 0; border-bottom: 1px solid #f1f5f9;">
+      <strong style="color: #f97316;">الربط المالي:</strong> كل Decision ID مربوط بـ Invoice ID
+    </li>
+    <li style="padding: 10px 0;">
+      <strong style="color: #f97316;">قياس الدقة:</strong> تتبع مستمر لأداء النظام
+    </li>
+  </ul>
+  
+  <div class="footer">
+    وثيقة سرية - للمستثمرين فقط | فبراير 2026
+  </div>
+</div>
+
+<!-- الصفحة 2: القواعد الأربع -->
+<div class="page">
+  <h2>هندسة قواعد بيانات سنافي (العقل المدبر)</h2>
+  
+  <p style="color: #64748b; margin-bottom: 30px;">
+    أربع قواعد بيانات مترابطة تعمل معاً لتوفير توصيات دقيقة وقابلة للقياس
+  </p>
+  
+  <table>
+    <thead>
+      <tr>
+        <th>القاعدة</th>
+        <th>الدور</th>
+        <th>البيانات الرئيسية</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="badge badge-primary">الموسوعة</span><br>Vehicle Catalog</td>
+        <td>مصدر بيانات 400 سيارة من 64 ماركة</td>
+        <td>الشركة، الموديل، سعة الخزان، نوع الوقود</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-info">دعم القرار</span><br>Decision Support</td>
+        <td>تخزين جلسات التوصية والربط المالي</td>
+        <td>Decision ID، التوصية، التكلفة، Invoice ID</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-success">السجلات</span><br>Historical Data</td>
+        <td>المطابقة الذكية للتنبؤات</td>
+        <td>سجلات التعبئة الناجحة، التقييمات</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-primary">الربط المالي</span><br>Integration Ledger</td>
+        <td>إثبات دقة النظام للمستثمرين</td>
+        <td>Decision ID ↔ Invoice ID</td>
+      </tr>
+    </tbody>
+  </table>
+  
+  <div class="decision-id-demo">
+    <p style="font-size: 14px; opacity: 0.8;">معرف القرار الفريد</p>
+    <div class="id">SNAFI-DSS-ABC123</div>
+    <p style="font-size: 12px; opacity: 0.6;">يتم توليده لكل جلسة توصية ويُربط بالفاتورة لتتبع الدقة</p>
+  </div>
+  
+  <h3>خوارزمية التوصية</h3>
+  <div class="flow-diagram">
+    <div class="flow-step">
+      <div class="flow-number">1</div>
+      <div class="flow-content">
+        <div class="flow-title">استلام بيانات السيارة</div>
+        <div class="flow-desc">الموديل، سعة الخزان، نوع الوقود</div>
+      </div>
+    </div>
+    <div class="arrow-down">↓</div>
+    <div class="flow-step">
+      <div class="flow-number">2</div>
+      <div class="flow-content">
+        <div class="flow-title">قراءة نسبة الوقود الحالية</div>
+        <div class="flow-desc">إدخال المستخدم أو قراءة تلقائية</div>
+      </div>
+    </div>
+    <div class="arrow-down">↓</div>
+    <div class="flow-step">
+      <div class="flow-number">3</div>
+      <div class="flow-content">
+        <div class="flow-title">البحث في السجلات التاريخية (±10%)</div>
+        <div class="flow-desc">Pattern Matching للتعبئات المشابهة الناجحة</div>
+      </div>
+    </div>
+    <div class="arrow-down">↓</div>
+    <div class="flow-step">
+      <div class="flow-number">4</div>
+      <div class="flow-content">
+        <div class="flow-title">حساب نسبة الثقة</div>
+        <div class="flow-desc">الثقة = min(95, 50 + (السجلات × 3) + (النجاح × 0.2))</div>
+      </div>
+    </div>
+    <div class="arrow-down">↓</div>
+    <div class="flow-step">
+      <div class="flow-number">5</div>
+      <div class="flow-content">
+        <div class="flow-title">توليد التوصية + Decision ID</div>
+        <div class="flow-desc">الكمية الموصى بها + التكلفة المتوقعة</div>
+      </div>
+    </div>
+  </div>
+  
+  <div class="footer">
+    صفحة 2 من 4 | هندسة قواعد البيانات
+  </div>
+</div>
+
+<!-- الصفحة 3: تقليل المخاطر -->
+<div class="page">
+  <h2>ربط GOSI وسمة بقرار الشراء</h2>
+  <p style="color: #64748b; margin-bottom: 30px;">
+    نظام تقييم مخاطر متكامل يجمع بين ثلاثة مصادر رسمية للتحقق من أهلية العميل
+  </p>
+  
+  <div class="flow-diagram">
+    <h3 style="text-align: center; margin-bottom: 20px;">مسار التحقق المتوازي</h3>
+    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; text-align: center;">
+      <div style="background: #dbeafe; padding: 20px; border-radius: 10px;">
+        <div style="font-size: 24px; margin-bottom: 10px; color: #3b82f6;">ID</div>
+        <strong>نفاذ</strong>
+        <p style="font-size: 12px; color: #64748b;">التحقق من الهوية</p>
+      </div>
+      <div style="background: #dcfce7; padding: 20px; border-radius: 10px;">
+        <div style="font-size: 24px; margin-bottom: 10px; color: #22c55e;">SIMAH</div>
+        <strong>سمة</strong>
+        <p style="font-size: 12px; color: #64748b;">السجل الائتماني</p>
+      </div>
+      <div style="background: #fef9c3; padding: 20px; border-radius: 10px;">
+        <div style="font-size: 24px; margin-bottom: 10px; color: #eab308;">EMP</div>
+        <strong>GOSI</strong>
+        <p style="font-size: 12px; color: #64748b;">بيانات التوظيف</p>
+      </div>
+    </div>
+  </div>
+  
+  <h3>جدول تقييم المخاطر</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>المعيار</th>
+        <th>الوزن</th>
+        <th>المصدر</th>
+        <th>التأثير على القرار</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>درجة سمة</td>
+        <td>40%</td>
+        <td>SIMAH</td>
+        <td>750+ = موافقة كاملة، &lt;500 = رفض</td>
+      </tr>
+      <tr>
+        <td>نوع التوظيف</td>
+        <td>30%</td>
+        <td>GOSI</td>
+        <td>حكومي = Premium، خاص = Medium</td>
+      </tr>
+      <tr>
+        <td>الراتب الشهري</td>
+        <td>15%</td>
+        <td>GOSI</td>
+        <td>يحدد الحد الائتماني الأقصى</td>
+      </tr>
+      <tr>
+        <td>فحص الامتثال</td>
+        <td>10%</td>
+        <td>KYC/AML</td>
+        <td>أي مخالفة = رفض فوري</td>
+      </tr>
+      <tr>
+        <td>التحقق من الهوية</td>
+        <td>5%</td>
+        <td>نفاذ</td>
+        <td>شرط أساسي للمتابعة</td>
+      </tr>
+    </tbody>
+  </table>
+  
+  <h3>مستويات الأولوية والائتمان</h3>
+  <table>
+    <thead>
+      <tr>
+        <th>المستوى</th>
+        <th>نوع التوظيف</th>
+        <th>الحد الائتماني</th>
+        <th>مدة التقسيط</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="badge badge-primary">Premium</span></td>
+        <td>حكومي</td>
+        <td>5,000 ريال</td>
+        <td>12 شهر</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-info">High</span></td>
+        <td>شبه حكومي</td>
+        <td>3,000 ريال</td>
+        <td>9 أشهر</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-success">Medium</span></td>
+        <td>قطاع خاص</td>
+        <td>2,000 ريال</td>
+        <td>6 أشهر</td>
+      </tr>
+      <tr>
+        <td><span style="background: #e2e8f0; padding: 4px 12px; border-radius: 20px; font-size: 12px;">Low</span></td>
+        <td>غير موظف</td>
+        <td>500 ريال</td>
+        <td>3 أشهر</td>
+      </tr>
+    </tbody>
+  </table>
+  
+  <div class="footer">
+    صفحة 3 من 4 | تقليل المخاطر المالية
+  </div>
+</div>
+
+<!-- الصفحة 4: مؤشرات الأداء -->
+<div class="page">
+  <h2>مؤشرات الأداء للمستثمرين (KPIs)</h2>
+  <p style="color: #64748b; margin-bottom: 30px;">
+    مقاييس قابلة للتتبع تثبت دقة وفعالية نظام سنافي
+  </p>
+  
+  <table>
+    <thead>
+      <tr>
+        <th>المؤشر</th>
+        <th>الوصف</th>
+        <th>الهدف</th>
+        <th>طريقة القياس</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>دقة التنبؤ</strong></td>
+        <td>مطابقة التوصية للتعبئة الفعلية</td>
+        <td>> 90%</td>
+        <td>(1 - |متوقع-فعلي|/فعلي) × 100</td>
+      </tr>
+      <tr>
+        <td><strong>معدل القبول</strong></td>
+        <td>نسبة قبول التوصيات من العملاء</td>
+        <td>> 80%</td>
+        <td>جلسات مقبولة / إجمالي الجلسات</td>
+      </tr>
+      <tr>
+        <td><strong>معدل التحسن</strong></td>
+        <td>تحسن الدقة مع مرور الوقت</td>
+        <td>تصاعدي</td>
+        <td>مقارنة شهرية</td>
+      </tr>
+      <tr>
+        <td><strong>الربط المالي</strong></td>
+        <td>جلسات مربوطة بفواتير فعلية</td>
+        <td>> 95%</td>
+        <td>جلسات مربوطة / جلسات مكتملة</td>
+      </tr>
+      <tr>
+        <td><strong>رضا العميل</strong></td>
+        <td>تقييم المستخدم للتوصية</td>
+        <td>> 4.0/5</td>
+        <td>متوسط التقييمات</td>
+      </tr>
+    </tbody>
+  </table>
+  
+  <div class="highlight-box" style="margin-top: 40px;">
+    <h3 style="text-align: center; margin-bottom: 20px;">الربط المالي (Integration Ledger)</h3>
+    <div style="display: flex; align-items: center; justify-content: center; gap: 20px; flex-wrap: wrap;">
+      <div style="background: white; padding: 20px 30px; border-radius: 10px; text-align: center;">
+        <p style="font-size: 12px; color: #64748b;">Decision ID</p>
+        <p style="font-family: monospace; font-size: 18px; color: #f97316; font-weight: 700;">SNAFI-DSS-ABC123</p>
+      </div>
+      <div style="font-size: 24px; color: #f97316;">⟷</div>
+      <div style="background: white; padding: 20px 30px; border-radius: 10px; text-align: center;">
+        <p style="font-size: 12px; color: #64748b;">Invoice ID</p>
+        <p style="font-family: monospace; font-size: 18px; color: #22c55e; font-weight: 700;">INV-2026-001234</p>
+      </div>
+    </div>
+    <p style="text-align: center; margin-top: 20px; font-size: 14px; color: #64748b;">
+      كل جلسة قرار مربوطة بفاتورة فعلية = إثبات موثق لدقة النظام
+    </p>
+  </div>
+  
+  <h3>معادلة حساب الحد الائتماني</h3>
+  <div style="background: #1e293b; color: white; padding: 25px; border-radius: 12px; font-family: monospace; margin: 20px 0;">
+    <p style="color: #94a3b8; margin-bottom: 10px;">// Credit Limit Formula</p>
+    <p>الحد_الائتماني = الراتب × معامل_التوظيف × معامل_سمة × معامل_الامتثال</p>
+    <br>
+    <p style="color: #94a3b8;">// Example: Government Employee</p>
+    <p style="color: #22c55e;">10,000 × 1.5 × 1.67 × 1.0 = 25,050 ريال (حد أقصى)</p>
+  </div>
+  
+  <div class="footer" style="margin-top: 60px;">
+    <p style="font-weight: 700; color: #0f172a; margin-bottom: 10px;">دربي | Derby</p>
+    <p>نظام تقسيط وقود السيارات الذكي</p>
+    <p style="margin-top: 10px;">فبراير 2026 | وثيقة سرية للمستثمرين</p>
+  </div>
+</div>
+
+</body>
+</html>

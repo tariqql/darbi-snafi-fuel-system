@@ -633,6 +633,20 @@ export const insertMerchantSchema = createInsertSchema(merchants).omit({ id: tru
 export type InsertMerchant = z.infer<typeof insertMerchantSchema>;
 export type Merchant = typeof merchants.$inferSelect;
 
+export const merchantRegistrationSchema = insertMerchantSchema.pick({
+  companyName: true,
+  commercialReg: true,
+  contactPhone: true,
+  contactEmail: true,
+}).extend({
+  companyName: z.string().min(3, "اسم الشركة يجب أن يكون 3 أحرف على الأقل").max(100),
+  commercialReg: z.string().min(10, "رقم السجل التجاري يجب أن يكون 10 أرقام").max(15).regex(/^[0-9]+$/, "السجل التجاري يجب أن يحتوي على أرقام فقط"),
+  city: z.string().min(1, "يرجى اختيار المدينة").max(50),
+  contactPhone: z.string().min(10, "رقم الجوال يجب أن يكون 10 أرقام").max(15).regex(/^05[0-9]{8}$/, "رقم الجوال يجب أن يبدأ بـ 05"),
+  contactEmail: z.string().email("البريد الإلكتروني غير صحيح").optional().or(z.literal(""))
+});
+export type MerchantRegistration = z.infer<typeof merchantRegistrationSchema>;
+
 // مفاتيح API للتجار
 export const merchantApiKeys = pgTable("merchant_api_keys", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -1601,3 +1615,96 @@ export const departmentKpis = pgTable("department_kpis", {
 export const insertDepartmentKpiSchema = createInsertSchema(departmentKpis).omit({ id: true, createdAt: true });
 export type InsertDepartmentKpi = z.infer<typeof insertDepartmentKpiSchema>;
 export type DepartmentKpi = typeof departmentKpis.$inferSelect;
+
+// ==========================================
+// البيئة التجريبية - Sandbox Environment (SAMA Compliance)
+// ==========================================
+
+export const sandboxConfig = pgTable("sandbox_config", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  environment: text("environment").notNull().default("sandbox"),
+  maxUsers: integer("max_users").default(500),
+  maxMerchants: integer("max_merchants").default(20),
+  maxTransactionAmount: real("max_transaction_amount").default(500),
+  dailyTransactionLimit: real("daily_transaction_limit").default(1000),
+  monthlyTransactionLimit: real("monthly_transaction_limit").default(5000),
+  isActive: boolean("is_active").default(true),
+  startDate: timestamp("start_date").defaultNow(),
+  endDate: timestamp("end_date"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertSandboxConfigSchema = createInsertSchema(sandboxConfig).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertSandboxConfig = z.infer<typeof insertSandboxConfigSchema>;
+export type SandboxConfig = typeof sandboxConfig.$inferSelect;
+
+// حدود العمليات - Transaction Limits
+export const transactionLimits = pgTable("transaction_limits", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  environment: text("environment").notNull().default("sandbox"),
+  dailyUsed: real("daily_used").default(0),
+  weeklyUsed: real("weekly_used").default(0),
+  monthlyUsed: real("monthly_used").default(0),
+  dailyLimit: real("daily_limit").default(1000),
+  weeklyLimit: real("weekly_limit").default(3000),
+  monthlyLimit: real("monthly_limit").default(5000),
+  maxSingleTransaction: real("max_single_transaction").default(500),
+  totalTransactions: integer("total_transactions").default(0),
+  lastResetDaily: timestamp("last_reset_daily").defaultNow(),
+  lastResetWeekly: timestamp("last_reset_weekly").defaultNow(),
+  lastResetMonthly: timestamp("last_reset_monthly").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertTransactionLimitSchema = createInsertSchema(transactionLimits).omit({ id: true, createdAt: true });
+export type InsertTransactionLimit = z.infer<typeof insertTransactionLimitSchema>;
+export type TransactionLimit = typeof transactionLimits.$inferSelect;
+
+// سجلات تدفق الأموال - Money Flow Logs (SAMA Compliance)
+export const moneyFlowLogs = pgTable("money_flow_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  environment: text("environment").notNull().default("sandbox"),
+  eventType: text("event_type").notNull(),
+  eventCategory: text("event_category").notNull(),
+  entityType: text("entity_type").notNull(),
+  entityId: varchar("entity_id"),
+  userId: varchar("user_id"),
+  merchantId: varchar("merchant_id"),
+  stationId: varchar("station_id"),
+  amount: real("amount"),
+  currency: text("currency").default("SAR"),
+  fromAccount: text("from_account"),
+  toAccount: text("to_account"),
+  status: text("status").notNull().default("completed"),
+  description: text("description"),
+  descriptionAr: text("description_ar"),
+  metadata: jsonb("metadata").default({}),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  riskScore: real("risk_score"),
+  flagged: boolean("flagged").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertMoneyFlowLogSchema = createInsertSchema(moneyFlowLogs).omit({ id: true, createdAt: true });
+export type InsertMoneyFlowLog = z.infer<typeof insertMoneyFlowLogSchema>;
+export type MoneyFlowLog = typeof moneyFlowLogs.$inferSelect;
+
+// سجل مخالفات الحدود - Limit Breach Log
+export const limitBreaches = pgTable("limit_breaches", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  breachType: text("breach_type").notNull(),
+  attemptedAmount: real("attempted_amount").notNull(),
+  currentUsage: real("current_usage").notNull(),
+  limitAmount: real("limit_amount").notNull(),
+  environment: text("environment").notNull().default("sandbox"),
+  resolved: boolean("resolved").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertLimitBreachSchema = createInsertSchema(limitBreaches).omit({ id: true, createdAt: true });
+export type InsertLimitBreach = z.infer<typeof insertLimitBreachSchema>;
+export type LimitBreach = typeof limitBreaches.$inferSelect;

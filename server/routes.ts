@@ -1,10 +1,14 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
+import { z } from "zod";
 import { storage } from "./storage";
 import { 
   insertInvoiceSchema, insertJourneySchema, 
   insertTankMeasurementSchema, insertAiPredictionSchema,
-  insertFuelRequestSchema, insertVehicleSchema
+  insertFuelRequestSchema, insertVehicleSchema,
+  merchantRegistrationSchema,
+  insertSandboxConfigSchema,
+  insertMoneyFlowLogSchema,
 } from "@shared/schema";
 import { 
   getUncachableGitHubClient, 
@@ -37,6 +41,7 @@ import {
   updateFuelPriceSchema,
 } from "./services/validation";
 import { snafiDecisionService } from "./services";
+import { adminService } from "./services/admin.service";
 
 // ============ RATE LIMITING (Anti-Brute Force) ============
 interface RateLimitEntry {
@@ -95,6 +100,125 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  // ============ App Type Detection API (Subdomain Routing) ============
+  app.get("/api/app-type", (req, res) => {
+    const host = req.headers.host || "";
+    
+    let appType: "customer" | "merchant" | "admin" = "customer";
+    let appName = "تطبيق العملاء";
+    let appNameEn = "Customer App";
+    
+    if (host.startsWith("partners.") || host.startsWith("business.") || host.startsWith("merchant.")) {
+      appType = "merchant";
+      appName = "بوابة التجار";
+      appNameEn = "Merchant Portal";
+    } else if (host.startsWith("admin.") || host.startsWith("dashboard.")) {
+      appType = "admin";
+      appName = "لوحة الموظفين";
+      appNameEn = "Admin Dashboard";
+    }
+    
+    res.json({
+      appType,
+      appName,
+      appNameEn,
+      host,
+      domains: {
+        customer: "darbby.co",
+        merchant: "partners.darbby.co",
+        admin: "admin.darbby.co"
+      }
+    });
+  });
+
+  // ============ Merchant Registration API ============
+  app.post("/api/merchants/register", async (req, res) => {
+    try {
+      const validationResult = merchantRegistrationSchema.safeParse(req.body);
+      
+      if (!validationResult.success) {
+        const firstError = validationResult.error.errors[0];
+        return res.status(400).json({ 
+          error: "بيانات غير صحيحة",
+          message: firstError?.message || "يرجى التحقق من البيانات المدخلة"
+        });
+      }
+
+      const { companyName, commercialReg, city, contactPhone, contactEmail } = validationResult.data;
+      const sanitizedReg = sanitizeString(commercialReg);
+      const sanitizedPhone = sanitizeString(contactPhone);
+      
+      const existingMerchant = await storage.getMerchantByCommercialReg(sanitizedReg);
+      
+      if (existingMerchant) {
+        return res.json({
+          isExisting: true,
+          status: existingMerchant.status,
+          merchantId: existingMerchant.id,
+          message: existingMerchant.status === "active" 
+            ? "مرحباً بعودتك! حسابك نشط" 
+            : "طلبك قيد المراجعة"
+        });
+      }
+
+      const merchantCode = `MERCH-${Date.now().toString(36).toUpperCase()}`;
+      
+      const newMerchant = await storage.createMerchant({
+        merchantCode,
+        companyName: sanitizeString(companyName),
+        companyNameAr: sanitizeString(companyName),
+        commercialReg: sanitizedReg,
+        contactEmail: contactEmail ? sanitizeString(contactEmail) : `${sanitizedPhone}@merchant.darbby.co`,
+        contactPhone: sanitizedPhone,
+        category: "fuel_station",
+        status: "pending",
+        isVerified: false,
+        commissionRate: 3,
+        settlementDays: 1,
+        maxTransactionLimit: 5000,
+        monthlyLimit: 100000,
+        currentMonthVolume: 0,
+        totalTransactions: 0,
+      });
+
+      res.status(201).json({
+        isExisting: false,
+        status: "pending",
+        merchantId: newMerchant.id,
+        merchantCode: newMerchant.merchantCode,
+        message: "تم استلام طلبك بنجاح! سيتواصل معك فريقنا خلال 24 ساعة"
+      });
+    } catch (error) {
+      console.error("Merchant registration error:", error);
+      res.status(500).json({ 
+        error: "حدث خطأ",
+        message: "يرجى المحاولة مرة أخرى لاحقاً"
+      });
+    }
+  });
+
+  app.get("/api/merchants/check/:commercialReg", async (req, res) => {
+    try {
+      const { commercialReg } = req.params;
+      const sanitizedReg = sanitizeString(commercialReg);
+      
+      const merchant = await storage.getMerchantByCommercialReg(sanitizedReg);
+      
+      if (merchant) {
+        res.json({
+          exists: true,
+          status: merchant.status,
+          companyName: merchant.companyName
+        });
+      } else {
+        res.json({ exists: false });
+      }
+    } catch (error) {
+      console.error("Merchant check error:", error);
+      res.status(500).json({ error: "حدث خطأ" });
+    }
+  });
   
   // ============ Invoices API ============
   
@@ -930,6 +1054,975 @@ export async function registerRoutes(
         return res.status(400).json({ error: "بيانات غير صحيحة", details: error.errors });
       }
       res.status(500).json({ error: error.message || "فشل في تحديث السعر" });
+    }
+  });
+
+  // ============ Merchant API (BNPL Integration - مثل تمارا/تابي) ============
+  // هذا القسم يجعل النظام مطابقاً لأنظمة BNPL مثل تمارا وتابي
+  
+  const { merchantService } = await import("./services");
+
+  // Middleware للتحقق من API Key
+  const authenticateMerchant = async (req: Request, res: Response, next: NextFunction) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ 
+        error: "Unauthorized", 
+        message: "Missing or invalid Authorization header. Use: Bearer sk_xxx" 
+      });
+    }
+
+    const secretKey = authHeader.substring(7);
+    const validation = await merchantService.validateApiKey(secretKey);
+    
+    if (!validation.valid) {
+      return res.status(401).json({ 
+        error: "Unauthorized", 
+        message: "Invalid API key" 
+      });
+    }
+
+    (req as any).merchant = validation.merchant;
+    (req as any).keyType = validation.keyType;
+    next();
+  };
+
+  // ---- Merchant Registration ----
+  
+  // تسجيل تاجر جديد
+  app.post("/api/merchant/register", async (req, res) => {
+    try {
+      const { companyName, companyNameAr, commercialReg, taxNumber, website, callbackUrl, contactEmail, contactPhone, category } = req.body;
+      
+      if (!companyName || !contactEmail) {
+        return res.status(400).json({ error: "companyName and contactEmail are required" });
+      }
+
+      const result = await merchantService.registerMerchant({
+        companyName,
+        companyNameAr,
+        commercialReg,
+        taxNumber,
+        website,
+        callbackUrl,
+        contactEmail,
+        contactPhone,
+        category,
+      });
+
+      res.status(201).json({
+        success: true,
+        message: "تم تسجيل التاجر بنجاح. سيتم مراجعة الطلب وتفعيل الحساب.",
+        data: {
+          merchantCode: result.merchant.merchantCode,
+          status: result.merchant.status,
+          sandboxKeys: result.apiKeys.sandbox,
+        }
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to register merchant" });
+    }
+  });
+
+  // تفعيل التاجر (للإدارة)
+  app.post("/api/merchant/:merchantId/activate", async (req, res) => {
+    try {
+      const result = await merchantService.activateMerchant(req.params.merchantId);
+      res.json({
+        success: true,
+        message: "تم تفعيل التاجر",
+        data: {
+          merchantCode: result.merchant.merchantCode,
+          productionKeys: {
+            publicKey: result.productionKeys.publicKey,
+            secretKey: result.productionKeys.secretKey,
+          }
+        }
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to activate merchant" });
+    }
+  });
+
+  // ---- Checkout API (Main BNPL Flow) ----
+  
+  // إنشاء جلسة دفع جديدة (مثل تمارا/تابي)
+  app.post("/api/merchant/checkout", authenticateMerchant, async (req: Request, res: Response) => {
+    try {
+      const merchant = (req as any).merchant;
+      const {
+        merchantReference,
+        consumer,
+        amount,
+        items,
+        paymentType,
+        installmentCount,
+        urls
+      } = req.body;
+
+      // التحقق من البيانات المطلوبة
+      if (!merchantReference || !consumer?.phone || !amount?.total || !urls?.success || !urls?.failure) {
+        return res.status(400).json({
+          error: "Missing required fields",
+          required: ["merchantReference", "consumer.phone", "amount.total", "urls.success", "urls.failure"]
+        });
+      }
+
+      // التحقق من حدود التاجر
+      if (amount.total > merchant.maxTransactionLimit) {
+        return res.status(400).json({
+          error: "Transaction exceeds limit",
+          maxAllowed: merchant.maxTransactionLimit
+        });
+      }
+
+      const session = await merchantService.createCheckoutSession({
+        merchantId: merchant.id,
+        merchantReference,
+        consumerPhone: consumer.phone,
+        consumerEmail: consumer.email,
+        consumerName: consumer.name,
+        consumerNationalId: consumer.nationalId,
+        totalAmount: amount.total,
+        taxAmount: amount.tax,
+        shippingAmount: amount.shipping,
+        discountAmount: amount.discount,
+        items,
+        paymentType: paymentType || "pay_in_installments",
+        installmentCount: installmentCount || 4,
+        successUrl: urls.success,
+        failureUrl: urls.failure,
+        cancelUrl: urls.cancel,
+        notificationUrl: urls.notification || merchant.callbackUrl,
+      });
+
+      res.status(201).json({
+        success: true,
+        data: {
+          sessionToken: session.sessionToken,
+          checkoutUrl: session.checkoutUrl,
+          expiresAt: session.expiresAt,
+          status: session.status,
+        }
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to create checkout session" });
+    }
+  });
+
+  // الحصول على حالة جلسة الدفع
+  app.get("/api/merchant/checkout/:sessionToken", authenticateMerchant, async (req: Request, res: Response) => {
+    try {
+      const sessionToken = req.params.sessionToken as string;
+      const session = await merchantService.getCheckoutSession(sessionToken);
+      
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+
+      const merchant = (req as any).merchant;
+      if (session.merchantId !== merchant.id) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      res.json({
+        success: true,
+        data: {
+          sessionToken: session.sessionToken,
+          merchantReference: session.merchantReference,
+          status: session.status,
+          totalAmount: session.totalAmount,
+          paymentType: session.paymentType,
+          installmentCount: session.installmentCount,
+          consumer: {
+            phone: session.consumerPhone,
+            email: session.consumerEmail,
+            name: session.consumerName,
+          },
+          invoiceId: session.invoiceId,
+          approvedAt: session.approvedAt,
+          capturedAt: session.capturedAt,
+          createdAt: session.createdAt,
+        }
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to get session" });
+    }
+  });
+
+  // إلغاء جلسة الدفع
+  app.post("/api/merchant/checkout/:sessionToken/cancel", authenticateMerchant, async (req: Request, res: Response) => {
+    try {
+      const sessionToken = req.params.sessionToken as string;
+      const session = await merchantService.getCheckoutSession(sessionToken);
+      
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+
+      const merchant = (req as any).merchant;
+      if (session.merchantId !== merchant.id) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+
+      if (session.status !== "pending" && session.status !== "approved") {
+        return res.status(400).json({ error: "Cannot cancel session in current status" });
+      }
+
+      const updated = await merchantService.declineCheckout(sessionToken, "Cancelled by merchant");
+      
+      res.json({
+        success: true,
+        message: "Session cancelled",
+        data: { status: updated?.status }
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to cancel session" });
+    }
+  });
+
+  // ---- Merchant Dashboard API ----
+  
+  // إحصائيات التاجر
+  app.get("/api/merchant/stats", authenticateMerchant, async (req: Request, res: Response) => {
+    try {
+      const merchant = (req as any).merchant;
+      const stats = await merchantService.getMerchantStats(merchant.id);
+      
+      res.json({
+        success: true,
+        data: stats
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to get stats" });
+    }
+  });
+
+  // ---- Consumer Checkout Flow (للعميل النهائي) ----
+  
+  // صفحة الدفع للعميل
+  app.get("/api/checkout/:sessionToken", async (req, res) => {
+    try {
+      const session = await merchantService.getCheckoutSession(req.params.sessionToken);
+      
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+
+      if (session.status === "expired" || (session.expiresAt && new Date(session.expiresAt) < new Date())) {
+        return res.status(400).json({ error: "Session expired" });
+      }
+
+      res.json({
+        sessionToken: session.sessionToken,
+        totalAmount: session.totalAmount,
+        installmentCount: session.installmentCount,
+        monthlyAmount: Math.round((session.totalAmount / (session.installmentCount || 4)) * 100) / 100,
+        items: session.items,
+        status: session.status,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to get checkout" });
+    }
+  });
+
+  // موافقة العميل على الدفع
+  app.post("/api/checkout/:sessionToken/approve", async (req, res) => {
+    try {
+      const session = await merchantService.getCheckoutSession(req.params.sessionToken);
+      
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+
+      if (session.status !== "pending") {
+        return res.status(400).json({ error: "Session already processed" });
+      }
+
+      const { consumerId, creditLimit, riskScore } = req.body;
+      
+      // الموافقة على الجلسة
+      const approved = await merchantService.approveCheckout(
+        req.params.sessionToken,
+        consumerId || session.consumerPhone,
+        creditLimit || session.totalAmount,
+        riskScore || 50
+      );
+
+      // إنشاء فاتورة داخلية
+      const invoice = await storage.createInvoice({
+        userId: consumerId || session.consumerPhone,
+        totalAmount: session.totalAmount,
+        installmentMonths: session.installmentCount || 4,
+        monthlyAmount: Math.round((session.totalAmount / (session.installmentCount || 4)) * 100) / 100,
+        status: "active",
+        dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      });
+
+      // التقاط الدفع وربطه بالفاتورة
+      await merchantService.capturePayment(req.params.sessionToken, invoice.id);
+
+      res.json({
+        success: true,
+        message: "Payment approved",
+        redirectUrl: session.successUrl,
+        invoiceId: invoice.id,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to approve checkout" });
+    }
+  });
+
+  // رفض الدفع
+  app.post("/api/checkout/:sessionToken/decline", async (req, res) => {
+    try {
+      const { reason } = req.body;
+      const session = await merchantService.declineCheckout(req.params.sessionToken, reason || "Declined by consumer");
+
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+
+      res.json({
+        success: true,
+        message: "Payment declined",
+        redirectUrl: session.failureUrl,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to decline checkout" });
+    }
+  });
+
+  // ============ Admin Management System API ============
+  
+  // Dashboard Stats
+  app.get("/api/admin/dashboard", async (req, res) => {
+    try {
+      const stats = await adminService.getDashboardStats();
+      res.json({ success: true, data: stats });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Admin Users Management
+  app.get("/api/admin/users", async (req, res) => {
+    try {
+      const admins = await adminService.getAdminUsers();
+      res.json({ success: true, data: admins });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/admin/users", async (req, res) => {
+    try {
+      const admin = await adminService.createAdminUser(req.body);
+      res.json({ success: true, data: admin });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/admin/users/:id", async (req, res) => {
+    try {
+      const updated = await adminService.updateAdminUser(req.params.id, req.body);
+      res.json({ success: true, data: updated });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Admin Login
+  app.post("/api/admin/login", async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      const admin = await adminService.authenticateAdmin(
+        email, 
+        password,
+        req.ip,
+        req.headers["user-agent"]
+      );
+
+      if (!admin) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+
+      res.json({ success: true, data: admin });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Merchants Management
+  app.get("/api/admin/merchants", async (req, res) => {
+    try {
+      const merchants = await adminService.getAllMerchants();
+      res.json({ success: true, data: merchants });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/admin/merchants/:id/status", async (req, res) => {
+    try {
+      const { status, adminId } = req.body;
+      const updated = await adminService.updateMerchantStatus(req.params.id, status, adminId || "system");
+      res.json({ success: true, data: updated });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Customers Management
+  app.get("/api/admin/customers", async (req, res) => {
+    try {
+      const customers = await adminService.getAllUsers();
+      res.json({ success: true, data: customers });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/admin/customers/:id/status", async (req, res) => {
+    try {
+      const { status, adminId } = req.body;
+      const updated = await adminService.updateUserStatus(req.params.id, status, adminId || "system");
+      res.json({ success: true, data: updated });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/admin/customers/:id/credit-limit", async (req, res) => {
+    try {
+      const { creditLimit, adminId } = req.body;
+      const updated = await adminService.updateUserCreditLimit(req.params.id, creditLimit, adminId || "system");
+      res.json({ success: true, data: updated });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Invoices Management
+  app.get("/api/admin/invoices", async (req, res) => {
+    try {
+      const invoices = await adminService.getAllInvoices();
+      res.json({ success: true, data: invoices });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Workflow Requests
+  app.get("/api/admin/workflows", async (req, res) => {
+    try {
+      const status = req.query.status as string | undefined;
+      const workflows = await adminService.getWorkflowRequests(status);
+      res.json({ success: true, data: workflows });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/admin/workflows", async (req, res) => {
+    try {
+      const workflow = await adminService.createWorkflowRequest(req.body);
+      res.json({ success: true, data: workflow });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/admin/workflows/:id/review", async (req, res) => {
+    try {
+      const { reviewerId, status, reviewNote } = req.body;
+      const updated = await adminService.reviewWorkflowRequest(
+        req.params.id,
+        reviewerId || "system",
+        status,
+        reviewNote
+      );
+      res.json({ success: true, data: updated });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Audit Logs
+  app.get("/api/admin/audit-logs", async (req, res) => {
+    try {
+      const logs = await adminService.getAuditLogs({ limit: 100 });
+      res.json({ success: true, data: logs });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // System Settings
+  app.get("/api/admin/settings", async (req, res) => {
+    try {
+      const settings = await adminService.getSystemSettings();
+      res.json({ success: true, data: settings });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put("/api/admin/settings/:key", async (req, res) => {
+    try {
+      const { value, adminId } = req.body;
+      const updated = await adminService.updateSystemSetting(req.params.key, value, adminId || "system");
+      res.json({ success: true, data: updated });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Branches
+  app.get("/api/admin/branches", async (req, res) => {
+    try {
+      const branches = await adminService.getBranches();
+      res.json({ success: true, data: branches });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/admin/branches", async (req, res) => {
+    try {
+      const branch = await adminService.createBranch(req.body);
+      res.json({ success: true, data: branch });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ============ SAMA SANDBOX & MONITORING API ============
+
+  // Sandbox Config
+  app.get("/api/sandbox/config", async (req, res) => {
+    try {
+      let config = await storage.getSandboxConfig();
+      if (!config) {
+        config = await storage.createSandboxConfig({
+          environment: "sandbox",
+          maxUsers: 500,
+          maxMerchants: 20,
+          maxTransactionAmount: 500,
+          dailyTransactionLimit: 1000,
+          monthlyTransactionLimit: 5000,
+          isActive: true,
+        });
+      }
+      res.json({ success: true, data: config });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  const sandboxConfigUpdateSchema = z.object({
+    maxUsers: z.number().min(1).max(10000).optional(),
+    maxMerchants: z.number().min(1).max(1000).optional(),
+    maxTransactionAmount: z.number().min(1).max(10000).optional(),
+    dailyTransactionLimit: z.number().min(1).max(100000).optional(),
+    monthlyTransactionLimit: z.number().min(1).max(1000000).optional(),
+    isActive: z.boolean().optional(),
+  });
+
+  app.put("/api/sandbox/config", async (req, res) => {
+    try {
+      const validation = sandboxConfigUpdateSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({ error: "Invalid config data", details: validation.error.errors });
+      }
+      const config = await storage.getSandboxConfig();
+      if (!config) {
+        return res.status(404).json({ error: "Sandbox config not found" });
+      }
+      const updated = await storage.updateSandboxConfig(config.id, validation.data);
+      res.json({ success: true, data: updated });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Transaction Limits
+  app.get("/api/sandbox/limits/:userId", async (req, res) => {
+    try {
+      let limit = await storage.getTransactionLimit(req.params.userId);
+      if (!limit) {
+        limit = await storage.createTransactionLimit({
+          userId: req.params.userId,
+          environment: "sandbox",
+          dailyUsed: 0,
+          weeklyUsed: 0,
+          monthlyUsed: 0,
+          dailyLimit: 1000,
+          weeklyLimit: 3000,
+          monthlyLimit: 5000,
+          maxSingleTransaction: 500,
+          totalTransactions: 0,
+        });
+      }
+      res.json({ success: true, data: limit });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/sandbox/limits/check", async (req, res) => {
+    try {
+      const { userId, amount } = req.body;
+      if (!userId || !amount) {
+        return res.status(400).json({ error: "userId and amount are required" });
+      }
+
+      let limit = await storage.getTransactionLimit(userId);
+      if (!limit) {
+        limit = await storage.createTransactionLimit({
+          userId,
+          environment: "sandbox",
+          dailyUsed: 0,
+          weeklyUsed: 0,
+          monthlyUsed: 0,
+          dailyLimit: 1000,
+          weeklyLimit: 3000,
+          monthlyLimit: 5000,
+          maxSingleTransaction: 500,
+          totalTransactions: 0,
+        });
+      }
+
+      const breaches: string[] = [];
+      if (amount > (limit.maxSingleTransaction || 500)) {
+        breaches.push("max_single_transaction");
+      }
+      if ((limit.dailyUsed || 0) + amount > (limit.dailyLimit || 1000)) {
+        breaches.push("daily_limit");
+      }
+      if ((limit.weeklyUsed || 0) + amount > (limit.weeklyLimit || 3000)) {
+        breaches.push("weekly_limit");
+      }
+      if ((limit.monthlyUsed || 0) + amount > (limit.monthlyLimit || 5000)) {
+        breaches.push("monthly_limit");
+      }
+
+      if (breaches.length > 0) {
+        for (const breachType of breaches) {
+          await storage.createLimitBreach({
+            userId,
+            breachType,
+            attemptedAmount: amount,
+            currentUsage: breachType === "daily_limit" ? (limit.dailyUsed || 0) :
+                          breachType === "weekly_limit" ? (limit.weeklyUsed || 0) :
+                          breachType === "monthly_limit" ? (limit.monthlyUsed || 0) : 0,
+            limitAmount: breachType === "daily_limit" ? (limit.dailyLimit || 1000) :
+                         breachType === "weekly_limit" ? (limit.weeklyLimit || 3000) :
+                         breachType === "monthly_limit" ? (limit.monthlyLimit || 5000) :
+                         (limit.maxSingleTransaction || 500),
+            environment: "sandbox",
+          });
+        }
+
+        await storage.createMoneyFlowLog({
+          environment: "sandbox",
+          eventType: "limit_breach",
+          eventCategory: "risk",
+          entityType: "transaction_limit",
+          userId,
+          amount,
+          status: "blocked",
+          description: `Transaction blocked: ${breaches.join(", ")}`,
+          descriptionAr: `تم حظر العملية: تجاوز ${breaches.length} حد(ود)`,
+          flagged: true,
+          riskScore: breaches.length * 25,
+        });
+
+        return res.json({
+          success: false,
+          allowed: false,
+          breaches,
+          message: "تجاوز حدود العمليات المسموحة",
+          limits: limit,
+        });
+      }
+
+      res.json({
+        success: true,
+        allowed: true,
+        remainingDaily: (limit.dailyLimit || 1000) - (limit.dailyUsed || 0) - amount,
+        remainingMonthly: (limit.monthlyLimit || 5000) - (limit.monthlyUsed || 0) - amount,
+        limits: limit,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Money Flow Logs
+  app.get("/api/sandbox/money-flow", async (req, res) => {
+    try {
+      const { environment, userId, startDate, endDate } = req.query;
+      const filters: any = {};
+      if (environment) filters.environment = environment as string;
+      if (userId) filters.userId = userId as string;
+      if (startDate) filters.startDate = new Date(startDate as string);
+      if (endDate) filters.endDate = new Date(endDate as string);
+
+      const logs = await storage.getMoneyFlowLogs(filters);
+      res.json({ success: true, data: logs });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/sandbox/money-flow", async (req, res) => {
+    try {
+      const validation = insertMoneyFlowLogSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({ error: "Invalid money flow data", details: validation.error.errors });
+      }
+      const log = await storage.createMoneyFlowLog(validation.data);
+      res.json({ success: true, data: log });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Limit Breaches
+  app.get("/api/sandbox/breaches", async (req, res) => {
+    try {
+      const { userId, environment } = req.query;
+      const filters: any = {};
+      if (userId) filters.userId = userId as string;
+      if (environment) filters.environment = environment as string;
+
+      const breaches = await storage.getLimitBreaches(filters);
+      res.json({ success: true, data: breaches });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Monitoring Dashboard Stats
+  app.get("/api/sandbox/monitoring", async (req, res) => {
+    try {
+      const environment = (req.query.environment as string) || "sandbox";
+      const stats = await storage.getMonitoringStats(environment);
+      const config = await storage.getSandboxConfig();
+      const recentLogs = await storage.getMoneyFlowLogs({ environment });
+      const recentBreaches = await storage.getLimitBreaches({ environment });
+
+      res.json({
+        success: true,
+        data: {
+          stats,
+          config,
+          recentTransactions: recentLogs.slice(0, 50),
+          recentBreaches: recentBreaches.slice(0, 20),
+          environment,
+        }
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  const simulateTransactionSchema = z.object({
+    userId: z.string().min(1, "userId is required"),
+    merchantId: z.string().optional(),
+    stationId: z.string().optional(),
+    amount: z.number().min(1, "Amount must be at least 1").max(10000, "Amount exceeds maximum"),
+    fuelType: z.string().optional(),
+    liters: z.number().optional(),
+  });
+
+  app.post("/api/sandbox/simulate-transaction", async (req, res) => {
+    try {
+      const validation = simulateTransactionSchema.safeParse(req.body);
+      if (!validation.success) {
+        return res.status(400).json({ error: "Invalid transaction data", details: validation.error.errors });
+      }
+      const { userId, merchantId, stationId, amount, fuelType, liters } = validation.data;
+
+      // Check limits first
+      let limit = await storage.getTransactionLimit(userId);
+      if (!limit) {
+        limit = await storage.createTransactionLimit({
+          userId,
+          environment: "sandbox",
+          dailyUsed: 0,
+          weeklyUsed: 0,
+          monthlyUsed: 0,
+          dailyLimit: 1000,
+          weeklyLimit: 3000,
+          monthlyLimit: 5000,
+          maxSingleTransaction: 500,
+          totalTransactions: 0,
+        });
+      }
+
+      const breaches: string[] = [];
+      if (amount > (limit.maxSingleTransaction || 500)) breaches.push("max_single_transaction");
+      if ((limit.dailyUsed || 0) + amount > (limit.dailyLimit || 1000)) breaches.push("daily_limit");
+      if ((limit.monthlyUsed || 0) + amount > (limit.monthlyLimit || 5000)) breaches.push("monthly_limit");
+
+      if (breaches.length > 0) {
+        for (const bt of breaches) {
+          await storage.createLimitBreach({
+            userId,
+            breachType: bt,
+            attemptedAmount: amount,
+            currentUsage: bt === "daily_limit" ? (limit.dailyUsed || 0) : (limit.monthlyUsed || 0),
+            limitAmount: bt === "daily_limit" ? (limit.dailyLimit || 1000) : bt === "monthly_limit" ? (limit.monthlyLimit || 5000) : (limit.maxSingleTransaction || 500),
+            environment: "sandbox",
+          });
+        }
+        await storage.createMoneyFlowLog({
+          environment: "sandbox",
+          eventType: "transaction_blocked",
+          eventCategory: "risk",
+          entityType: "fuel_purchase",
+          userId,
+          merchantId,
+          stationId,
+          amount,
+          status: "blocked",
+          description: `Sandbox transaction blocked: ${breaches.join(", ")}`,
+          descriptionAr: `عملية تجريبية محظورة: تجاوز الحدود`,
+          flagged: true,
+          riskScore: 75,
+        });
+        return res.json({ success: false, blocked: true, breaches, message: "تم حظر العملية بسبب تجاوز الحدود" });
+      }
+
+      // Step 1: Customer debit
+      const debitLog = await storage.createMoneyFlowLog({
+        environment: "sandbox",
+        eventType: "customer_debit",
+        eventCategory: "payment",
+        entityType: "fuel_purchase",
+        userId,
+        merchantId,
+        stationId,
+        amount,
+        currency: "SAR",
+        fromAccount: `customer_${userId}`,
+        toAccount: "darby_escrow",
+        status: "completed",
+        description: `Customer debited ${amount} SAR for fuel purchase`,
+        descriptionAr: `تم خصم ${amount} ريال من حساب العميل لشراء الوقود`,
+        riskScore: 10,
+        flagged: false,
+      });
+
+      // Step 2: Darby escrow receipt
+      await storage.createMoneyFlowLog({
+        environment: "sandbox",
+        eventType: "escrow_receipt",
+        eventCategory: "settlement",
+        entityType: "fuel_purchase",
+        entityId: debitLog.id,
+        userId,
+        merchantId,
+        stationId,
+        amount,
+        currency: "SAR",
+        fromAccount: `customer_${userId}`,
+        toAccount: "darby_escrow",
+        status: "completed",
+        description: `Darby escrow received ${amount} SAR`,
+        descriptionAr: `استلام ${amount} ريال في حساب دربي الوسيط`,
+        riskScore: 5,
+        flagged: false,
+      });
+
+      // Step 3: Station settlement
+      const commissionRate = 0.03;
+      const commission = amount * commissionRate;
+      const stationAmount = amount - commission;
+
+      await storage.createMoneyFlowLog({
+        environment: "sandbox",
+        eventType: "station_settlement",
+        eventCategory: "settlement",
+        entityType: "fuel_purchase",
+        entityId: debitLog.id,
+        userId,
+        merchantId,
+        stationId,
+        amount: stationAmount,
+        currency: "SAR",
+        fromAccount: "darby_escrow",
+        toAccount: `station_${stationId || "default"}`,
+        status: "completed",
+        description: `Station settled ${stationAmount} SAR (commission: ${commission} SAR)`,
+        descriptionAr: `تسوية ${stationAmount} ريال للمحطة (عمولة: ${commission} ريال)`,
+        riskScore: 5,
+        flagged: false,
+        metadata: { commission, commissionRate, fuelType, liters },
+      });
+
+      // Step 4: Commission record
+      await storage.createMoneyFlowLog({
+        environment: "sandbox",
+        eventType: "commission_earned",
+        eventCategory: "revenue",
+        entityType: "fuel_purchase",
+        entityId: debitLog.id,
+        merchantId,
+        amount: commission,
+        currency: "SAR",
+        fromAccount: "darby_escrow",
+        toAccount: "darby_revenue",
+        status: "completed",
+        description: `Darby commission ${commission} SAR (${commissionRate * 100}%)`,
+        descriptionAr: `عمولة دربي ${commission} ريال (${commissionRate * 100}%)`,
+        riskScore: 0,
+        flagged: false,
+      });
+
+      // Update user limits
+      await storage.updateTransactionLimit(userId, {
+        dailyUsed: (limit.dailyUsed || 0) + amount,
+        weeklyUsed: (limit.weeklyUsed || 0) + amount,
+        monthlyUsed: (limit.monthlyUsed || 0) + amount,
+        totalTransactions: (limit.totalTransactions || 0) + 1,
+      });
+
+      res.json({
+        success: true,
+        transaction: {
+          id: debitLog.id,
+          amount,
+          commission,
+          stationAmount,
+          status: "completed",
+          steps: [
+            { step: 1, type: "customer_debit", amount, descriptionAr: "خصم من حساب العميل" },
+            { step: 2, type: "escrow_receipt", amount, descriptionAr: "استلام في حساب دربي الوسيط" },
+            { step: 3, type: "station_settlement", amount: stationAmount, descriptionAr: "تسوية للمحطة" },
+            { step: 4, type: "commission", amount: commission, descriptionAr: "عمولة دربي" },
+          ]
+        }
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/generate-pdf", async (_req, res) => {
+    try {
+      const { generateDarbyPDF } = await import("./services/pdf-generator");
+      const pdfBuffer = await generateDarbyPDF();
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", 'attachment; filename="Darby_SAMA_Application.pdf"');
+      res.setHeader("Content-Length", pdfBuffer.length.toString());
+      res.send(pdfBuffer);
+    } catch (error: any) {
+      console.error("PDF generation error:", error);
+      res.status(500).json({ error: "Failed to generate PDF", details: error.message });
     }
   });
 

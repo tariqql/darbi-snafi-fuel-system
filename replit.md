@@ -51,12 +51,64 @@ I want to work iteratively. Please ask before making major changes. I prefer det
   - **Permissions**: 50+ detailed permissions covering user management, merchant management, invoicing, finance, risk, compliance, fraud, collections, branches, POS, workflows, and system settings.
   - **Organizational Structure Database**: Detailed schema for departments, roles, permissions, daily tasks, department relationships, reporting chains, workflow templates, approval levels, authority delegations, and department KPIs.
 
+### Multi-Application Architecture
+The system is structured as **3 separate applications** accessible via a central App Selector, mirroring Tamara/Tabby's enterprise approach:
+
+1. **Customer App (darbby.co)**
+   - Path: `/customer/*` or root on main domain
+   - Features: طلب التقسيط, إدارة الفواتير, محرك سنافي, صمم رحلتك
+   - Target Users: العملاء الأفراد
+
+2. **Merchant Portal (partners.darbby.co)**
+   - Path: `/merchant/*` or root on partners subdomain
+   - Features: إدارة المعاملات, API التكامل, التقارير المالية, Webhooks
+   - Target Users: التجار والشركاء
+
+3. **Admin Dashboard (admin.darbby.co)**
+   - Path: `/admin/*` or root on admin subdomain
+   - Features: إدارة المستخدمين, الموافقات, التقارير, RBAC (27 roles, 14 departments)
+   - Target Users: الموظفين والمدراء
+
+### Subdomain Routing (Express Middleware)
+The server detects the app type from `req.headers.host`:
+- **partners.darbby.co** / **business.*** / **merchant.*** → Merchant Portal
+- **admin.darbby.co** / **dashboard.*** → Admin Dashboard
+- **darbby.co** (or any other) → Customer App
+
+API Endpoint: `GET /api/app-type` returns the detected app configuration.
+
+Frontend: `client/src/lib/app-detector.ts` handles client-side subdomain detection.
+
 ### File Structure
 ```
-client/         # Frontend application
-server/         # Backend application
-shared/         # Shared schemas (e.g., database schemas)
+client/
+├── src/
+│   ├── apps/
+│   │   ├── AppSelector.tsx      # Main app selector landing page
+│   │   ├── customer/
+│   │   │   └── CustomerLayout.tsx
+│   │   ├── merchant/
+│   │   │   └── MerchantLayout.tsx
+│   │   └── admin/
+│   │       └── AdminLayout.tsx
+│   ├── pages/                   # Shared page components
+│   ├── components/              # Reusable UI components
+│   └── lib/                     # Utilities and helpers
+server/                          # Backend application
+shared/                          # Shared schemas (database)
 ```
+
+## SAMA Sandbox & Regulatory Compliance (Added Feb 2026)
+- **Sandbox Environment**: All sandbox transactions tagged with `environment: "sandbox"` for data segregation
+- **Transaction Limits**: Multi-level limits (single, daily, weekly, monthly) enforced server-side
+- **Money Flow Logs**: Immutable audit trail tracking customer → darby_escrow → station money path
+- **Limit Breaches**: Automatic logging of all limit breach attempts
+- **SAMA Monitoring Dashboard**: Real-time transaction monitoring at `/admin/monitoring`
+- **Simulate Transaction API**: `POST /api/sandbox/simulate-transaction` for demo/testing
+- **Key Tables**: `sandbox_config`, `transaction_limits`, `money_flow_logs`, `limit_breaches`
+- **Key API Endpoints**: `/api/sandbox/monitoring`, `/api/sandbox/config`, `/api/sandbox/limits/:userId`, `/api/sandbox/money-flow`, `/api/sandbox/breaches`, `/api/sandbox/simulate-transaction`
+- **SAMA Document**: `docs/SAMA_SANDBOX_APPLICATION.md` - Full regulatory application document
+- **PDF Generation**: `GET /api/generate-pdf` generates official SAMA application PDF using Puppeteer (puppeteer-core with system Chromium). PDF includes cover page, Arabic RTL content, risk tables, security layers, KYC flow, and signature section. Generator at `server/services/pdf-generator.ts`. Download button on SAMA monitoring page.
 
 ## External Dependencies
 - **PostgreSQL**: Relational database for persistent storage.
